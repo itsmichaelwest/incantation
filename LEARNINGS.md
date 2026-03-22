@@ -1,0 +1,23 @@
+# Learnings
+
+- The Z: drive mapping on the XP VM is unreliable. Use UNC paths in Cygwin instead: `//vmware-host/Shared Folders/incantation/`
+- CSC compiler requires Windows-style paths. Use `cygpath -w <path>` to convert Cygwin paths before passing to the compiler.
+- Compiling directly from the shared folder UNC path is problematic due to spaces in "Shared Folders". Use `C:\Projects` as the local working directory on the XP VM instead.
+- `rsync -av` from the UNC shared folder to `/cygdrive/c/Projects/` is the cleanest sync approach — incremental, handles the whole project.
+- Cygwin `mkdir -p` fails on `C:\` due to permission mapping issues, but `cmd /c mkdir` works fine. The `C:\Projects` directory was created this way.
+- Backslashes in paths get consumed by bash over SSH. Always use `cygpath -w` variables rather than inline Windows paths.
+- Newtonsoft.Json 13.0.3 has a `net20` build that works on .NET 2.0. Download from NuGet, extract, and reference the DLL directly (NuGet restore not available on .NET 2.0).
+- Windows XP SChannel only supports TLS 1.0 — modern HTTPS APIs reject it. Use a proxy on Win11 for all internet-bound requests.
+- Microsoft Agent COM interop can be done via late binding (`Type.GetTypeFromProgID("Agent.Control.2")`) without generating interop DLLs. Requires `[STAThread]`.
+- Merlin.acs locations on XP: `C:\Windows\MSAgent\chars\Merlin.acs` or `C:\Windows\srchasst\chars\Merlin.acs` (Search Companion).
+- GitHub Copilot SDK v0.2.0 (NuGet: `GitHub.Copilot.SDK`) uses `CopilotClient` → `CopilotSession` with event callbacks via `session.On()`. Events include `AssistantMessageDeltaEvent`, `ToolExecutionStartEvent`, `ToolExecutionCompleteEvent`, `SessionIdleEvent`, `SessionErrorEvent`, etc.
+- The Copilot CLI binary (`copilot`) must be installed separately (`winget install GitHub.Copilot`) and authenticated (`copilot auth login`) before the SDK can use it.
+- The SDK build target auto-downloads the Copilot CLI binary during `dotnet build` (from npm registry). No separate install needed for the CLI itself.
+- `session.On()` callback is synchronous — use `Channel<string>` to bridge events to async SSE response writing. Complete the channel on `SessionIdleEvent` or `SessionErrorEvent`.
+- `SessionConfig.OnPermissionRequest` is required when creating sessions. Use `PermissionHandler.ApproveAll` for unattended/proxy scenarios.
+- `CopilotClientOptions.Cwd` sets the working directory for the CLI process — important for file context resolution.
+- SSE streaming on .NET 2.0: use `HttpWebRequest` with `ReadWriteTimeout = 300000`, read response stream with `StreamReader.ReadLine()` loop. Works for `text/event-stream`.
+- VS2005 .csproj format requires `ToolsVersion` to be absent (or `2.0`) and uses `ProductVersion=8.0.50727`, `SchemaVersion=2.0`. All .cs files must be explicitly listed in `<Compile Include>` items.
+- .NET 2.0 C# does not support anonymous types for JSON serialization — use a simple POCO class with explicit getter/setter properties instead (e.g., `PromptPayload` for `{"prompt":"..."}`).
+- .NET 2.0 CSC enforces CS0136 strictly: cannot reuse a local variable name inside a nested scope if it shadows one in the parent scope. Use distinct names (e.g., `taskIdx` vs `idx`).
+- Project renamed from CoworkXP to Incantation. Repo is `incantation`. Solution is `Incantation.sln`, projects are `Incantation/`, `Incantation.ToolServer/`, `Incantation.Proxy/`.
