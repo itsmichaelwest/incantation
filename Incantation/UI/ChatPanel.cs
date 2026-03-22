@@ -76,6 +76,32 @@ namespace Incantation.UI
     public class ChatPanel : Control, IChatRenderer
     {
         // ================================================================
+        // Font smoothing detection
+        // ================================================================
+        private const int SPI_GETFONTSMOOTHINGTYPE = 0x200A;
+        private const int FE_FONTSMOOTHINGCLEARTYPE = 0x0002;
+
+        [DllImport("user32.dll")]
+        private static extern bool SystemParametersInfo(int uAction, int uParam, out int pvParam, int fWinIni);
+
+        private static readonly System.Drawing.Text.TextRenderingHint _textHint = DetectTextHint();
+
+        private static System.Drawing.Text.TextRenderingHint DetectTextHint()
+        {
+            if (!SystemInformation.IsFontSmoothingEnabled)
+            {
+                return System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
+            }
+            int smoothType = 0;
+            SystemParametersInfo(SPI_GETFONTSMOOTHINGTYPE, 0, out smoothType, 0);
+            if (smoothType == FE_FONTSMOOTHINGCLEARTYPE)
+            {
+                return System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            }
+            return System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        }
+
+        // ================================================================
         // Visual constants
         // ================================================================
         private const int BLOCK_MARGIN = 6;
@@ -968,7 +994,7 @@ namespace Incantation.UI
         {
             base.OnPaint(e);
             Graphics g = e.Graphics;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            g.TextRenderingHint = _textHint;
 
             int width = ClientSize.Width - (_scrollBar.Visible ? _scrollBar.Width : 0);
             int scrollOffset = _scrollBar.Visible ? _scrollBar.Value : 0;
