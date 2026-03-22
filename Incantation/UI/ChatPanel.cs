@@ -1498,6 +1498,14 @@ namespace Incantation.UI
             }
         }
 
+        public void CopySelectedText()
+        {
+            if (_hasSelection)
+            {
+                CopySelection();
+            }
+        }
+
         private void CopySelection()
         {
             // Normalize selection range

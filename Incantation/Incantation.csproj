@@ -8,6 +8,7 @@
     <OutputType>WinExe</OutputType>
     <RootNamespace>Incantation</RootNamespace>
     <AssemblyName>Incantation</AssemblyName>
+    <ApplicationIcon>Resources\wand.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -51,10 +52,16 @@
     <Compile Include="UI\GradientHeader.cs" />
     <Compile Include="UI\ChatPanel.cs" />
     <Compile Include="UI\Office2003Renderer.cs" />
+    <Compile Include="UI\InputPanel.cs" />
+    <Compile Include="EventRouter.cs" />
+    <Compile Include="Config\AppSettings.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\Incantation.ToolServer\bin\Debug\Incantation.ToolServer.exe">
       <Link>Incantation.ToolServer.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\wand.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

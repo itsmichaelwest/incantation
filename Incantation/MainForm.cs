@@ -3,13 +3,15 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Incantation.Agent;
 using Incantation.Chat;
+using Incantation.Config;
 using Incantation.Net;
 using Incantation.UI;
-using Newtonsoft.Json.Linq;
 
 namespace Incantation
 {
@@ -28,6 +30,12 @@ namespace Incantation
         private MerlinHelper _merlin;
         private System.Diagnostics.Process _toolServerProcess;
 
+        // Extracted components
+        private EventRouter _eventRouter;
+        private InputPanel _inputPanel;
+        private AppSettings _appSettings;
+        private string _settingsPath;
+
         // Layout: outer[left | inner[center | right]]
         private SplitContainer _outerSplit;
         private SplitContainer _innerSplit;
@@ -36,21 +44,15 @@ namespace Incantation
         // Toolbar
         private ToolStrip _toolStrip;
 
-        // Left sidebar — Sessions
+        // Left sidebar -- Sessions
         private Panel _leftPanel;
         private Panel _hdrSessions;
         private ListBox _sessionList;
 
-        // Center — Chat
+        // Center -- Chat
         private ChatPanel _chatBox;
-        private TextBox _inputBox;
-        private Panel _inputPanel;
-        private Button _btnSend;
-        private ComboBox _cboWorkDir;
-        private ComboBox _cboModel;
-        private ListBox _attachList;
 
-        // Right sidebar — Tasks / Output / Context (stacked)
+        // Right sidebar -- Tasks / Output / Context (stacked)
         private Panel _rightPanel;
         private SplitContainer _rightSplit1;
         private SplitContainer _rightSplit2;
@@ -68,8 +70,9 @@ namespace Incantation
         private ToolStripStatusLabel _statusSession;
         private ToolStripStatusLabel _statusState;
 
-        // Input border
-        private Panel _inputBorder;
+        // View menu checkboxes
+        private ToolStripMenuItem _viewSessionsMenuItem;
+        private ToolStripMenuItem _viewDetailsMenuItem;
 
         // Workers
         private BackgroundWorker _messageWorker;
@@ -82,7 +85,7 @@ namespace Incantation
         private List<string> _sessionIds;
         private Dictionary<string, string> _sessionTitles;
         private Dictionary<string, int> _toolCallIndex;
-        private List<string> _contextFiles;
+        private Dictionary<string, string> _toolCallNames;
         private List<string> _outputFiles;
 
         // Persistence
@@ -96,10 +99,24 @@ namespace Incantation
             _sessionIds = new List<string>();
             _sessionTitles = new Dictionary<string, string>();
             _toolCallIndex = new Dictionary<string, int>();
-            _contextFiles = new List<string>();
+            _toolCallNames = new Dictionary<string, string>();
             _outputFiles = new List<string>();
             _assistantBuffer = "";
             _reasoningBuffer = "";
+
+            _settingsPath = Path.Combine(Application.StartupPath, "settings.json");
+
+            // Initialize the event router and subscribe to all events
+            _eventRouter = new EventRouter();
+            _eventRouter.IntentReceived += new EventHandler<IntentEventArgs>(this.OnIntentReceived);
+            _eventRouter.ReasoningReceived += new EventHandler<ContentEventArgs>(this.OnReasoningReceived);
+            _eventRouter.DeltaReceived += new EventHandler<ContentEventArgs>(this.OnDeltaReceived);
+            _eventRouter.MessageReceived += new EventHandler<ContentEventArgs>(this.OnMessageReceived);
+            _eventRouter.ToolStartReceived += new EventHandler<ToolStartEventArgs>(this.OnToolStartReceived);
+            _eventRouter.ToolEndReceived += new EventHandler<ToolEndEventArgs>(this.OnToolEndReceived);
+            _eventRouter.TitleChanged += new EventHandler<TitleChangedEventArgs>(this.OnTitleChangedReceived);
+            _eventRouter.IdleReceived += new EventHandler(this.OnIdleReceived);
+            _eventRouter.ErrorReceived += new EventHandler<ErrorEventArgs>(this.OnErrorReceived);
 
             InitializeComponents();
             _chatHistory = new ChatHistory();
@@ -116,24 +133,43 @@ namespace Incantation
             this.StartPosition = FormStartPosition.CenterScreen;
             this.Font = new Font("Tahoma", 8.25f);
 
+            // Set form icon from Resources
+            string iconPath = System.IO.Path.Combine(
+                System.IO.Path.Combine(Application.StartupPath, "Resources"), "wand.ico");
+            if (System.IO.File.Exists(iconPath))
+            {
+                try { this.Icon = new Icon(iconPath); }
+                catch { }
+            }
+
             // ============================================================
             // Main menu (MenuStrip)
             // ============================================================
             _menuStrip = new MenuStrip();
 
             ToolStripMenuItem fileMenu = new ToolStripMenuItem("File");
-            fileMenu.DropDownItems.Add(new ToolStripMenuItem("New Session", null, new EventHandler(this.OnNewSession)));
-            fileMenu.DropDownItems.Add(new ToolStripMenuItem("Attach File...", null, new EventHandler(this.OnAttachClick)));
+            ToolStripMenuItem newSessionItem = new ToolStripMenuItem("New Session", null, new EventHandler(this.OnNewSession));
+            newSessionItem.ShortcutKeys = Keys.Control | Keys.N;
+            fileMenu.DropDownItems.Add(newSessionItem);
+            fileMenu.DropDownItems.Add(new ToolStripMenuItem("Attach File...", null, new EventHandler(this.OnFileAttachClick)));
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
             fileMenu.DropDownItems.Add(new ToolStripMenuItem("Exit", null, new EventHandler(this.OnExit)));
 
             ToolStripMenuItem editMenu = new ToolStripMenuItem("Edit");
-            editMenu.DropDownItems.Add(new ToolStripMenuItem("Copy", null, new EventHandler(this.OnCopy)));
-            editMenu.DropDownItems.Add(new ToolStripMenuItem("Clear History", null, new EventHandler(this.OnClearHistory)));
+            ToolStripMenuItem copyItem = new ToolStripMenuItem("Copy", null, new EventHandler(this.OnCopy));
+            copyItem.ShortcutKeys = Keys.Control | Keys.C;
+            editMenu.DropDownItems.Add(copyItem);
+            ToolStripMenuItem clearItem = new ToolStripMenuItem("Clear History", null, new EventHandler(this.OnClearHistory));
+            clearItem.ShortcutKeys = Keys.Control | Keys.L;
+            editMenu.DropDownItems.Add(clearItem);
 
             ToolStripMenuItem viewMenu = new ToolStripMenuItem("View");
-            viewMenu.DropDownItems.Add(new ToolStripMenuItem("Sessions Panel", null, new EventHandler(this.OnToggleSessionsPanel)));
-            viewMenu.DropDownItems.Add(new ToolStripMenuItem("Details Panel", null, new EventHandler(this.OnToggleDetailsPanel)));
+            _viewSessionsMenuItem = new ToolStripMenuItem("Sessions Panel", null, new EventHandler(this.OnToggleSessionsPanel));
+            _viewSessionsMenuItem.Checked = true;
+            viewMenu.DropDownItems.Add(_viewSessionsMenuItem);
+            _viewDetailsMenuItem = new ToolStripMenuItem("Details Panel", null, new EventHandler(this.OnToggleDetailsPanel));
+            _viewDetailsMenuItem.Checked = true;
+            viewMenu.DropDownItems.Add(_viewDetailsMenuItem);
 
             ToolStripMenuItem toolsMenu = new ToolStripMenuItem("Tools");
             toolsMenu.DropDownItems.Add(new ToolStripMenuItem("Settings", null, new EventHandler(this.OnSettings)));
@@ -185,7 +221,7 @@ namespace Incantation
             _statusStrip.Items.Add(_statusState);
 
             // ============================================================
-            // Left sidebar — Sessions
+            // Left sidebar -- Sessions
             // ============================================================
             _leftPanel = new Panel();
             _leftPanel.Dock = DockStyle.Fill;
@@ -216,11 +252,11 @@ namespace Incantation
             _sessionList.ContextMenu = sessionCtx;
 
             // Fill first (docks last), then edge controls (dock first)
-            _leftPanel.Controls.Add(_sessionList);     // Fill — index 0, docks last
-            _leftPanel.Controls.Add(_hdrSessions);     // Top — index 1, docks first
+            _leftPanel.Controls.Add(_sessionList);     // Fill -- index 0, docks last
+            _leftPanel.Controls.Add(_hdrSessions);     // Top -- index 1, docks first
 
             // ============================================================
-            // Right sidebar — Tasks / Output / Context (stacked)
+            // Right sidebar -- Tasks / Output / Context (stacked)
             // ============================================================
             _rightPanel = new Panel();
             _rightPanel.Dock = DockStyle.Fill;
@@ -243,8 +279,8 @@ namespace Incantation
             _tasksList.BackColor = GradientHeader.SidebarBg;
             _tasksList.BorderStyle = BorderStyle.None;
 
-            tasksPanel.Controls.Add(_tasksList);      // Fill — index 0, docks last
-            tasksPanel.Controls.Add(_hdrTasks);       // Top — index 1, docks first
+            tasksPanel.Controls.Add(_tasksList);      // Fill -- index 0, docks last
+            tasksPanel.Controls.Add(_hdrTasks);       // Top -- index 1, docks first
 
             // Output section
             Panel outputPanel = new Panel();
@@ -266,8 +302,8 @@ namespace Incantation
             _outputList.BackColor = GradientHeader.SidebarBg;
             _outputList.BorderStyle = BorderStyle.None;
 
-            outputPanel.Controls.Add(_outputList);    // Fill — index 0, docks last
-            outputPanel.Controls.Add(_hdrOutput);     // Top — index 1, docks first
+            outputPanel.Controls.Add(_outputList);    // Fill -- index 0, docks last
+            outputPanel.Controls.Add(_hdrOutput);     // Top -- index 1, docks first
 
             // Context section
             Panel contextPanel = new Panel();
@@ -289,8 +325,8 @@ namespace Incantation
             ctxMenu.MenuItems.Add(new MenuItem("Remove", new EventHandler(this.OnRemoveContext)));
             _contextList.ContextMenu = ctxMenu;
 
-            contextPanel.Controls.Add(_contextList);  // Fill — index 0, docks last
-            contextPanel.Controls.Add(_hdrContext);    // Top — index 1, docks first
+            contextPanel.Controls.Add(_contextList);  // Fill -- index 0, docks last
+            contextPanel.Controls.Add(_hdrContext);    // Top -- index 1, docks first
 
             // Stack: _rightSplit2 = Output | Context
             _rightSplit2 = new SplitContainer();
@@ -315,110 +351,16 @@ namespace Incantation
             _rightPanel.Controls.Add(_rightSplit1);
 
             // ============================================================
-            // Center — Chat area
+            // Center -- Chat area
             // ============================================================
             _chatBox = new ChatPanel();
             _chatBox.Dock = DockStyle.Fill;
 
-            _inputPanel = new Panel();
-            _inputPanel.Dock = DockStyle.Fill;
-
-            // --- Input toolbar strip (working dir, model, attach) ---
-            ToolStrip _inputToolbar = new ToolStrip();
-            _inputToolbar.GripStyle = ToolStripGripStyle.Hidden;
-            _inputToolbar.Dock = DockStyle.Top;
-
-            ToolStripLabel lblDir = new ToolStripLabel("Dir:");
-            _inputToolbar.Items.Add(lblDir);
-
-            _cboWorkDir = new ComboBox();
-            _cboWorkDir.DropDownStyle = ComboBoxStyle.DropDown;
-            _cboWorkDir.Font = new Font("Tahoma", 7.5f);
-            _cboWorkDir.Width = 200;
-            _cboWorkDir.FlatStyle = FlatStyle.Flat;
-            _cboWorkDir.Items.Add(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
-            _cboWorkDir.Items.Add(@"C:\Projects");
-            _cboWorkDir.Items.Add(@"C:\");
-            _cboWorkDir.SelectedIndex = 0;
-            ToolStripControlHost workDirHost = new ToolStripControlHost(_cboWorkDir);
-            _inputToolbar.Items.Add(workDirHost);
-
-            _inputToolbar.Items.Add(new ToolStripSeparator());
-
-            ToolStripLabel lblModel = new ToolStripLabel("Model:");
-            _inputToolbar.Items.Add(lblModel);
-
-            _cboModel = new ComboBox();
-            _cboModel.DropDownStyle = ComboBoxStyle.DropDownList;
-            _cboModel.Font = new Font("Tahoma", 7.5f);
-            _cboModel.Width = 150;
-            _cboModel.FlatStyle = FlatStyle.Flat;
-            _cboModel.Items.Add("(default)");
-            _cboModel.SelectedIndex = 0;
-            ToolStripControlHost modelHost = new ToolStripControlHost(_cboModel);
-            _inputToolbar.Items.Add(modelHost);
-
-            _inputToolbar.Items.Add(new ToolStripSeparator());
-
-            ToolStripButton tsbAttach = new ToolStripButton("Attach File...");
-            tsbAttach.Click += new EventHandler(this.OnAttachClick);
-            _inputToolbar.Items.Add(tsbAttach);
-
-            // --- Attachment display list ---
-            _attachList = new ListBox();
-            _attachList.Dock = DockStyle.Bottom;
-            _attachList.Height = 0;
-            _attachList.Visible = false;
-            _attachList.IntegralHeight = false;
-            _attachList.Font = new Font("Tahoma", 7.5f);
-            _attachList.DrawMode = DrawMode.OwnerDrawFixed;
-            _attachList.ItemHeight = 20;
-            _attachList.DrawItem += new DrawItemEventHandler(this.OnDrawAttachItem);
-
-            ContextMenu attachCtx = new ContextMenu();
-            attachCtx.MenuItems.Add(new MenuItem("Remove", new EventHandler(this.OnRemoveAttachment)));
-            _attachList.ContextMenu = attachCtx;
-
-            // --- Send button (right side of input) ---
-            _btnSend = new Button();
-            _btnSend.Text = "Send";
-            _btnSend.Dock = DockStyle.Right;
-            _btnSend.Width = 60;
-            _btnSend.FlatStyle = FlatStyle.Flat;
-            _btnSend.FlatAppearance.BorderColor = Color.FromArgb(148, 170, 186);
-            _btnSend.FlatAppearance.MouseOverBackColor = Color.FromArgb(232, 168, 124);
-            _btnSend.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 96, 48);
-            _btnSend.BackColor = Color.FromArgb(220, 228, 234);
-            _btnSend.ForeColor = Color.FromArgb(40, 50, 60);
-            _btnSend.Font = new Font("Tahoma", 8.25f, FontStyle.Bold);
-            _btnSend.Click += new EventHandler(this.OnSendClick);
-
-            // --- Input textbox with border ---
-            _inputBox = new TextBox();
-            _inputBox.Multiline = true;
-            _inputBox.Dock = DockStyle.Fill;
-            _inputBox.AcceptsTab = true;
-            _inputBox.ScrollBars = ScrollBars.Vertical;
-            _inputBox.Font = new Font("Tahoma", 8.25f);
-            _inputBox.BorderStyle = BorderStyle.None;
-            _inputBox.KeyDown += new KeyEventHandler(this.OnInputKeyDown);
-
-            _inputBorder = new Panel();
-            _inputBorder.Dock = DockStyle.Fill;
-            _inputBorder.Padding = new Padding(2);
-            _inputBorder.BackColor = Color.FromArgb(148, 170, 186);
-            _inputBorder.Controls.Add(_inputBox);
-
-            // --- Input area with send button beside textbox ---
-            Panel _inputRow = new Panel();
-            _inputRow.Dock = DockStyle.Fill;
-            _inputRow.Controls.Add(_inputBorder);      // Fill — textbox area
-            _inputRow.Controls.Add(_btnSend);           // Right — send button
-
-            // Assemble: toolbar on top, attachments, then input+send
-            _inputPanel.Controls.Add(_inputRow);        // Fill — docks last
-            _inputPanel.Controls.Add(_attachList);      // Bottom
-            _inputPanel.Controls.Add(_inputToolbar);    // Top — docks first
+            // InputPanel UserControl replaces the old hand-built input area
+            _inputPanel = new InputPanel();
+            _inputPanel.SendRequested += new EventHandler(this.OnSendRequested);
+            _inputPanel.StopRequested += new EventHandler(this.OnStopRequested);
+            _inputPanel.FilesAttached += new EventHandler<AttachEventArgs>(this.OnFilesAttached);
 
             // ============================================================
             // Assemble layout
@@ -452,10 +394,10 @@ namespace Incantation
             // CRITICAL: Add order determines dock priority in WinForms.
             // Last added = docked first. Fill must be added FIRST so it
             // docks LAST (takes remaining space after edge controls).
-            this.Controls.Add(_outerSplit);   // Fill — index 0, docks last
-            this.Controls.Add(_statusStrip);  // Bottom — docks before Fill
-            this.Controls.Add(_toolStrip);    // Top — docks before Fill
-            this.Controls.Add(_menuStrip);    // Top — above toolbar (docked first)
+            this.Controls.Add(_outerSplit);   // Fill -- index 0, docks last
+            this.Controls.Add(_statusStrip);  // Bottom -- docks before Fill
+            this.Controls.Add(_toolStrip);    // Top -- docks before Fill
+            this.Controls.Add(_menuStrip);    // Top -- above toolbar (docked first)
 
             // ============================================================
             // Background workers
@@ -538,16 +480,57 @@ namespace Incantation
 
         private void OnFormLoad(object sender, EventArgs e)
         {
+            // Load persistent settings
+            _appSettings = AppSettings.Load(_settingsPath);
+            _proxyAddress = _appSettings.ProxyAddress;
+            _merlinEnabled = _appSettings.MerlinEnabled;
+            _merlinMenuItem.Checked = _merlinEnabled;
+
+            // Apply window bounds
+            if (_appSettings.WindowX >= 0 && _appSettings.WindowY >= 0)
+            {
+                this.StartPosition = FormStartPosition.Manual;
+                this.Location = new Point(_appSettings.WindowX, _appSettings.WindowY);
+            }
+            if (_appSettings.WindowWidth > 0 && _appSettings.WindowHeight > 0)
+            {
+                this.Size = new Size(_appSettings.WindowWidth, _appSettings.WindowHeight);
+            }
+
+            // Apply splitter distances
+            if (_appSettings.OuterSplitDistance > 0)
+            {
+                try { _outerSplit.SplitterDistance = _appSettings.OuterSplitDistance; }
+                catch { }
+            }
+
+            // Load work dir history into InputPanel
+            _inputPanel.LoadWorkDirHistory(_appSettings.WorkDirHistory);
+
+            // Recreate proxy client with loaded address
+            _proxyClient = new ProxyClient(_proxyAddress);
+
             // Auto-launch ToolServer if not already running
             StartToolServer();
 
             // Set splitter distances now that controls have their actual sizes
             // (setting during construction causes clamping on small initial sizes)
-            if (_innerSplit.Width > 200)
+            if (_appSettings.InnerSplitDistance > 0)
+            {
+                try { _innerSplit.SplitterDistance = _appSettings.InnerSplitDistance; }
+                catch { }
+            }
+            else if (_innerSplit.Width > 200)
             {
                 _innerSplit.SplitterDistance = _innerSplit.Width - 180;
             }
-            if (_chatSplit.Height > 200)
+
+            if (_appSettings.ChatSplitDistance > 0)
+            {
+                try { _chatSplit.SplitterDistance = _appSettings.ChatSplitDistance; }
+                catch { }
+            }
+            else if (_chatSplit.Height > 200)
             {
                 _chatSplit.SplitterDistance = _chatSplit.Height - 140;
             }
@@ -555,14 +538,17 @@ namespace Incantation
             _merlin = new MerlinHelper();
             if (_merlin.Initialize())
             {
-                _merlin.Show();
-                RepositionMerlin();
-                _merlin.AnimateGreet();
+                if (_merlinEnabled)
+                {
+                    _merlin.Show();
+                    RepositionMerlin();
+                    _merlin.AnimateGreet();
+                }
             }
             else
             {
                 _chatRenderer.AppendSystemMessage(
-                    string.Format("Merlin unavailable: {0}", _merlin.LastError ?? "unknown error"));
+                    string.Format("Merlin unavailable: {0}", _merlin.LastError != null ? _merlin.LastError : "unknown error"));
             }
 
             _chatRenderer.AppendSystemMessage("Welcome to Incantation - AI Coding Assistant");
@@ -700,6 +686,7 @@ namespace Incantation
                     _outputList.Items.Clear();
                     _outputFiles.Clear();
                     _toolCallIndex.Clear();
+                    _toolCallNames.Clear();
                     _statusSession.Text = "No Session";
                 }
 
@@ -713,39 +700,39 @@ namespace Incantation
             {
                 // Check if ToolServer.exe exists next to Incantation.exe
                 string appDir = Application.StartupPath;
-                string toolServerPath = System.IO.Path.Combine(appDir, "Incantation.ToolServer.exe");
-                if (!System.IO.File.Exists(toolServerPath))
+                string toolServerPath = Path.Combine(appDir, "Incantation.ToolServer.exe");
+                if (!File.Exists(toolServerPath))
                 {
                     // Try one level up (bin\Debug layout)
-                    string parentDir = System.IO.Path.GetDirectoryName(appDir);
+                    string parentDir = Path.GetDirectoryName(appDir);
                     if (parentDir != null)
                     {
-                        string altPath = System.IO.Path.Combine(parentDir, "Incantation.ToolServer.exe");
-                        if (System.IO.File.Exists(altPath))
+                        string altPath = Path.Combine(parentDir, "Incantation.ToolServer.exe");
+                        if (File.Exists(altPath))
                         {
                             toolServerPath = altPath;
                         }
                     }
                 }
 
-                if (!System.IO.File.Exists(toolServerPath))
+                if (!File.Exists(toolServerPath))
                 {
                     // Try the ToolServer project output
-                    string projPath = System.IO.Path.Combine(
-                        System.IO.Path.Combine(
-                            System.IO.Path.Combine(
-                                System.IO.Path.Combine(
-                                    System.IO.Path.Combine(
-                                        System.IO.Path.Combine(appDir, ".."), ".."), ".."),
+                    string projPath = Path.Combine(
+                        Path.Combine(
+                            Path.Combine(
+                                Path.Combine(
+                                    Path.Combine(
+                                        Path.Combine(appDir, ".."), ".."), ".."),
                                 "Incantation.ToolServer"), "bin"),
-                        System.IO.Path.Combine("Debug", "Incantation.ToolServer.exe"));
-                    if (System.IO.File.Exists(projPath))
+                        Path.Combine("Debug", "Incantation.ToolServer.exe"));
+                    if (File.Exists(projPath))
                     {
                         toolServerPath = projPath;
                     }
                 }
 
-                if (System.IO.File.Exists(toolServerPath))
+                if (File.Exists(toolServerPath))
                 {
                     System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo();
                     psi.FileName = toolServerPath;
@@ -763,7 +750,7 @@ namespace Incantation
             catch (Exception ex)
             {
                 _chatRenderer.AppendError(string.Format("Failed to start Tool Server: {0}", ex.Message));
-                // ToolServer launch failed — tools will fail but chat still works
+                // ToolServer launch failed -- tools will fail but chat still works
             }
         }
 
@@ -774,6 +761,29 @@ namespace Incantation
             {
                 _sessionStore.Save(_currentSessionData);
             }
+
+            // Save persistent settings
+            if (_appSettings != null)
+            {
+                _appSettings.ProxyAddress = _proxyAddress;
+                _appSettings.MerlinEnabled = _merlinEnabled;
+                if (this.WindowState == FormWindowState.Normal)
+                {
+                    _appSettings.WindowX = this.Location.X;
+                    _appSettings.WindowY = this.Location.Y;
+                    _appSettings.WindowWidth = this.Size.Width;
+                    _appSettings.WindowHeight = this.Size.Height;
+                }
+                try { _appSettings.OuterSplitDistance = _outerSplit.SplitterDistance; }
+                catch { }
+                try { _appSettings.InnerSplitDistance = _innerSplit.SplitterDistance; }
+                catch { }
+                try { _appSettings.ChatSplitDistance = _chatSplit.SplitterDistance; }
+                catch { }
+                _appSettings.WorkDirHistory = _inputPanel.GetWorkDirHistory();
+                _appSettings.Save(_settingsPath);
+            }
+
             if (_messageWorker.IsBusy)
             {
                 _messageWorker.CancelAsync();
@@ -855,8 +865,9 @@ namespace Incantation
                 _outputList.Items.Clear();
                 _outputFiles.Clear();
                 _toolCallIndex.Clear();
+                _toolCallNames.Clear();
 
-                // Don't create persisted session yet — defer to first message
+                // Don't create persisted session yet -- defer to first message
                 _chatRenderer.AppendSystemMessage("Session created. You can start chatting.");
                 _chatRenderer.ScrollToEnd();
 
@@ -925,8 +936,9 @@ namespace Incantation
             _outputList.Items.Clear();
             _outputFiles.Clear();
             _contextList.Items.Clear();
-            _contextFiles.Clear();
+            _inputPanel.ClearAttachments();
             _toolCallIndex.Clear();
+            _toolCallNames.Clear();
 
             // Replay messages into chat renderer
             List<ChatMessage> msgs = loaded.Messages;
@@ -1001,11 +1013,11 @@ namespace Incantation
             // Restore sidebar state
             if (loaded.ContextFiles != null)
             {
-                _contextFiles = new List<string>(loaded.ContextFiles);
+                List<string> restoredFiles = new List<string>(loaded.ContextFiles);
                 _contextList.Items.Clear();
-                for (int i = 0; i < _contextFiles.Count; i++)
+                for (int i = 0; i < restoredFiles.Count; i++)
                 {
-                    _contextList.Items.Add(System.IO.Path.GetFileName(_contextFiles[i]));
+                    _contextList.Items.Add(Path.GetFileName(restoredFiles[i]));
                 }
             }
             if (loaded.OutputFiles != null)
@@ -1018,14 +1030,14 @@ namespace Incantation
                 }
             }
 
-            string title = loaded.DisplayTitle;
-            _statusSession.Text = title;
+            string displayTitle = loaded.DisplayTitle;
+            _statusSession.Text = displayTitle;
             _chatRenderer.ScrollToEnd();
 
             // Restore working directory
             if (loaded.WorkingDirectory != null && loaded.WorkingDirectory.Length > 0)
             {
-                _cboWorkDir.Text = loaded.WorkingDirectory;
+                _inputPanel.SetWorkDirText(loaded.WorkingDirectory);
             }
 
             // Don't create a proxy session now -- it will be created lazily on first message
@@ -1040,8 +1052,9 @@ namespace Incantation
 
         private void SendMessage()
         {
-            string text = _inputBox.Text.Trim();
-            if (text.Length == 0 && _contextFiles.Count == 0) return;
+            string text = _inputPanel.InputText.Trim();
+            List<string> contextFiles = _inputPanel.ContextFiles;
+            if (text.Length == 0 && contextFiles.Count == 0) return;
             if (_sessionId == null)
             {
                 _chatRenderer.AppendError("No active session. Try File > New Session.");
@@ -1057,12 +1070,12 @@ namespace Incantation
 
             // Build prompt with attached file contents
             string prompt = "";
-            for (int i = 0; i < _contextFiles.Count; i++)
+            for (int i = 0; i < contextFiles.Count; i++)
             {
                 try
                 {
-                    string content = System.IO.File.ReadAllText(_contextFiles[i]);
-                    string name = System.IO.Path.GetFileName(_contextFiles[i]);
+                    string content = File.ReadAllText(contextFiles[i]);
+                    string name = Path.GetFileName(contextFiles[i]);
                     prompt += string.Format("[Attached file: {0}]\n```\n{1}\n```\n\n", name, content);
                 }
                 catch
@@ -1072,19 +1085,17 @@ namespace Incantation
             }
             prompt += text;
 
-            _inputBox.Text = "";
+            _inputPanel.InputText = "";
 
             // Capture attached files before clearing
             List<string> attachedFiles = new List<string>();
-            if (_contextFiles.Count > 0)
+            if (contextFiles.Count > 0)
             {
-                for (int i = 0; i < _contextFiles.Count; i++)
+                for (int i = 0; i < contextFiles.Count; i++)
                 {
-                    attachedFiles.Add(_contextFiles[i]);
+                    attachedFiles.Add(contextFiles[i]);
                 }
-                _contextFiles.Clear();
-                _attachList.Items.Clear();
-                UpdateAttachListVisibility();
+                _inputPanel.ClearAttachments();
             }
 
             // Create persisted session on first message (deferred from OnSessionCompleted)
@@ -1136,6 +1147,8 @@ namespace Incantation
             _chatRenderer.ScrollToEnd();
 
             _statusState.Text = "Thinking...";
+            _inputPanel.IsBusy = true;
+
             if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
             {
                 _merlin.AnimateAcknowledge();
@@ -1143,7 +1156,7 @@ namespace Incantation
 
             if (_proxySessionId == null)
             {
-                // Need to create a proxy session first — pass conversation history for resumed sessions
+                // Need to create a proxy session first -- pass conversation history for resumed sessions
                 _statusState.Text = "Creating session...";
                 _pendingMessage = prompt;
                 if (!_sessionWorker.IsBusy)
@@ -1178,279 +1191,18 @@ namespace Incantation
 
             try
             {
-                JObject obj = JObject.Parse(json);
-                JToken typeToken = obj.SelectToken("type");
-                if (typeToken == null) return;
-                string eventType = (string)typeToken;
-
-                if (eventType == "intent")
-                {
-                    JToken intentToken = obj.SelectToken("intent");
-                    if (intentToken != null)
-                    {
-                        string intentText = (string)intentToken;
-                        // Check off the previous intent (it's done)
-                        if (_tasksList.Items.Count > 0)
-                        {
-                            int lastIdx = _tasksList.Items.Count - 1;
-                            if (!_tasksList.GetItemChecked(lastIdx))
-                            {
-                                _tasksList.SetItemChecked(lastIdx, true);
-                                MarkLastIntentCompleted();
-                            }
-                        }
-                        // Add new intent as unchecked
-                        _tasksList.Items.Add(intentText);
-                        _tasksList.TopIndex = _tasksList.Items.Count - 1;
-                        _statusState.Text = intentText;
-                        if (_currentSessionData != null)
-                        {
-                            ChatMessage intentMsg = new ChatMessage("system", intentText, "intent");
-                            _currentSessionData.AddMessage(intentMsg);
-                        }
-                        if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
-                        {
-                            _merlin.AnimateExplain();
-                        }
-                    }
-                }
-                else if (eventType == "reasoning")
-                {
-                    JToken contentToken = obj.SelectToken("content");
-                    if (contentToken != null)
-                    {
-                        string reasoningText = (string)contentToken;
-                        _reasoningBuffer += reasoningText;
-                        _chatRenderer.AppendReasoning(reasoningText);
-                        _chatRenderer.ScrollToEnd();
-                        _statusState.Text = "Thinking...";
-                        if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
-                        {
-                            _merlin.AnimateThinking();
-                        }
-                    }
-                }
-                else if (eventType == "delta")
-                {
-                    // Save accumulated reasoning before first content delta
-                    if (_reasoningBuffer.Length > 0 && _currentSessionData != null)
-                    {
-                        _currentSessionData.AddMessage(new ChatMessage("assistant", _reasoningBuffer, "reasoning"));
-                        _reasoningBuffer = "";
-                    }
-
-                    JToken contentToken = obj.SelectToken("content");
-                    if (contentToken != null)
-                    {
-                        string content = (string)contentToken;
-                        _assistantBuffer += content;
-                        _chatRenderer.AppendDelta(content);
-                        _chatRenderer.ScrollToEnd();
-                        _statusState.Text = "Streaming...";
-                        if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
-                        {
-                            _merlin.AnimateWriting();
-                        }
-                    }
-                }
-                else if (eventType == "message")
-                {
-                    _chatRenderer.FinalizeMessage();
-                    _chatRenderer.ScrollToEnd();
-                }
-                else if (eventType == "tool_start")
-                {
-                    JToken toolToken = obj.SelectToken("tool");
-                    string toolName = toolToken != null ? (string)toolToken : "unknown";
-                    JToken idToken = obj.SelectToken("id");
-                    string toolId = idToken != null ? (string)idToken : null;
-                    JToken inputToken = obj.SelectToken("input");
-                    string inputStr = inputToken != null ? (string)inputToken : null;
-
-                    // Extract a human-readable summary from the tool input
-                    string summary = ExtractToolSummary(toolName, inputStr);
-                    string filePath = ExtractFilePath(toolName, inputStr);
-
-                    // Track tool call index for checking off on tool_end
-                    if (toolId != null)
-                    {
-                        _toolCallIndex[toolId] = -1; // no task list entry
-                    }
-
-                    _chatRenderer.AppendToolCall(summary, inputStr);
-                    if (_currentSessionData != null)
-                    {
-                        ChatMessage toolMsg = new ChatMessage("tool", summary, "tool");
-                        toolMsg.Detail = inputStr != null ? inputStr : "";
-                        _currentSessionData.AddMessage(toolMsg);
-                    }
-                    _chatRenderer.ScrollToEnd();
-                    _statusState.Text = string.Format("Tool: {0}", toolName);
-
-                    // Add file path to output list if applicable
-                    if (filePath != null)
-                    {
-                        AddOutputItem(filePath);
-                    }
-
-                    // Show file artifact in chat for file-creating tools
-                    if (toolName == "write" || toolName == "Write"
-                        || toolName == "xp_write_file" || toolName == "Edit" || toolName == "edit")
-                    {
-                        if (filePath != null)
-                        {
-                            _chatRenderer.AppendFileArtifact(filePath);
-                        }
-                    }
-
-                    if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
-                    {
-                        if (toolName == "write" || toolName == "Write"
-                            || toolName == "xp_write_file" || toolName == "Edit" || toolName == "edit")
-                        {
-                            _merlin.AnimateDoMagic();
-                        }
-                        else if (toolName == "read" || toolName == "Read" || toolName == "View"
-                            || toolName == "view" || toolName == "xp_read_file")
-                        {
-                            _merlin.AnimateReading();
-                        }
-                        else if (toolName == "xp_shell")
-                        {
-                            _merlin.AnimateProcessing();
-                        }
-                        else
-                        {
-                            _merlin.AnimateSearching();
-                        }
-                    }
-                }
-                else if (eventType == "tool_end")
-                {
-                    JToken idToken = obj.SelectToken("id");
-                    string toolId = idToken != null ? (string)idToken : null;
-                    JToken successToken = obj.SelectToken("success");
-                    bool success = successToken != null && (bool)successToken;
-
-                    // Check off the task
-                    if (toolId != null && _toolCallIndex.ContainsKey(toolId))
-                    {
-                        int idx = _toolCallIndex[toolId];
-                        if (idx < _tasksList.Items.Count)
-                        {
-                            _tasksList.SetItemChecked(idx, success);
-                        }
-                    }
-
-                    // Add output files if present
-                    JToken outputToken = obj.SelectToken("output");
-                    if (outputToken != null)
-                    {
-                        string output = (string)outputToken;
-                        if (output != null && output.Length > 0 && output.Length < 500)
-                        {
-                            // Short output — might be a file path or result summary
-                            string trimmed = output.Trim();
-                            if (trimmed.Length > 0 && trimmed.Length < 260)
-                            {
-                                AddOutputItem(trimmed);
-                            }
-                        }
-                    }
-
-                    if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
-                    {
-                        if (success)
-                        {
-                            _merlin.AnimateAnnounce();
-                        }
-                        else
-                        {
-                            _merlin.AnimateConfused();
-                        }
-                    }
-                }
-                else if (eventType == "title_changed")
-                {
-                    JToken titleToken = obj.SelectToken("title");
-                    if (titleToken != null)
-                    {
-                        string title = (string)titleToken;
-                        if (_sessionId != null)
-                        {
-                            _sessionTitles[_sessionId] = title;
-                            _statusSession.Text = title;
-                            if (_currentSessionData != null)
-                            {
-                                _currentSessionData.Title = title;
-                                _sessionStore.Save(_currentSessionData);
-                            }
-                            LoadPersistedSessions();
-                        }
-                    }
-                }
-                else if (eventType == "idle")
-                {
-                    // Check off the last intent
-                    if (_tasksList.Items.Count > 0)
-                    {
-                        int lastIdx = _tasksList.Items.Count - 1;
-                        if (!_tasksList.GetItemChecked(lastIdx))
-                        {
-                            _tasksList.SetItemChecked(lastIdx, true);
-                            MarkLastIntentCompleted();
-                        }
-                    }
-                    // Save any remaining reasoning
-                    if (_currentSessionData != null && _reasoningBuffer.Length > 0)
-                    {
-                        _currentSessionData.AddMessage(new ChatMessage("assistant", _reasoningBuffer, "reasoning"));
-                        _reasoningBuffer = "";
-                    }
-                    // Save assistant response to session
-                    if (_currentSessionData != null && _assistantBuffer.Length > 0)
-                    {
-                        _currentSessionData.AddMessage(new ChatMessage("assistant", _assistantBuffer, DateTime.Now));
-                        _currentSessionData.ContextFiles = new List<string>(_contextFiles);
-                        _currentSessionData.OutputFiles = new List<string>(_outputFiles);
-                        _sessionStore.Save(_currentSessionData);
-                        _assistantBuffer = "";
-                    }
-                    _chatRenderer.AppendNewline();
-                    _chatRenderer.ScrollToEnd();
-                    _statusState.Text = "Ready";
-                    if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
-                    {
-                        _merlin.AnimateCongratulate();
-                    }
-                }
-                else if (eventType == "error")
-                {
-                    JToken msgToken = obj.SelectToken("message");
-                    if (msgToken != null)
-                    {
-                        string errorMsg = (string)msgToken;
-                        _chatRenderer.AppendError(errorMsg);
-                        _chatRenderer.ScrollToEnd();
-                        if (_currentSessionData != null)
-                        {
-                            _currentSessionData.AddMessage(new ChatMessage("system", errorMsg, "error"));
-                        }
-                    }
-                    if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
-                    {
-                        _merlin.AnimateSad();
-                    }
-                }
+                _eventRouter.HandleEvent(json);
             }
             catch
             {
+                // Ignore malformed events
             }
         }
 
         private void OnMessageCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
             _statusState.Text = "Ready";
+            _inputPanel.IsBusy = false;
 
             if (e.Error != null)
             {
@@ -1472,6 +1224,337 @@ namespace Incantation
             _chatRenderer.FinalizeMessage();
             _chatRenderer.ScrollToEnd();
             if (_merlin != null && _merlin.IsAvailable && _merlinEnabled) _merlin.AnimatePleased();
+        }
+
+        // ====================================================================
+        // EventRouter event handlers
+        // ====================================================================
+
+        private void OnIntentReceived(object sender, IntentEventArgs e)
+        {
+            string intentText = e.Intent;
+
+            // Check off the previous intent (it's done)
+            if (_tasksList.Items.Count > 0)
+            {
+                int lastIdx = _tasksList.Items.Count - 1;
+                if (!_tasksList.GetItemChecked(lastIdx))
+                {
+                    _tasksList.SetItemChecked(lastIdx, true);
+                    MarkLastIntentCompleted();
+                }
+                _tasksList.Refresh();
+            }
+
+            // Add new intent as unchecked
+            _tasksList.Items.Add(intentText);
+            _tasksList.TopIndex = _tasksList.Items.Count - 1;
+            _tasksList.Refresh();
+            _statusState.Text = intentText;
+
+            if (_currentSessionData != null)
+            {
+                ChatMessage intentMsg = new ChatMessage("system", intentText, "intent");
+                _currentSessionData.AddMessage(intentMsg);
+            }
+
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+            {
+                _merlin.AnimateExplain();
+            }
+        }
+
+        private void OnReasoningReceived(object sender, ContentEventArgs e)
+        {
+            string reasoningText = e.Content;
+            _reasoningBuffer += reasoningText;
+            _chatRenderer.AppendReasoning(reasoningText);
+            _chatRenderer.ScrollToEnd();
+            _statusState.Text = "Thinking...";
+
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+            {
+                _merlin.AnimateThinking();
+            }
+        }
+
+        private void OnDeltaReceived(object sender, ContentEventArgs e)
+        {
+            // Save accumulated reasoning before first content delta
+            if (_reasoningBuffer.Length > 0 && _currentSessionData != null)
+            {
+                _currentSessionData.AddMessage(new ChatMessage("assistant", _reasoningBuffer, "reasoning"));
+                _reasoningBuffer = "";
+            }
+
+            string content = e.Content;
+            _assistantBuffer += content;
+            _chatRenderer.AppendDelta(content);
+            _chatRenderer.ScrollToEnd();
+            _statusState.Text = "Streaming...";
+
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+            {
+                _merlin.AnimateWriting();
+            }
+        }
+
+        private void OnMessageReceived(object sender, ContentEventArgs e)
+        {
+            _chatRenderer.FinalizeMessage();
+            _chatRenderer.ScrollToEnd();
+        }
+
+        private void OnToolStartReceived(object sender, ToolStartEventArgs e)
+        {
+            string toolName = e.ToolName;
+            string toolId = e.ToolId;
+            string inputStr = e.Input;
+
+            // Extract a human-readable summary from the tool input
+            string summary = ExtractToolSummary(toolName, inputStr);
+            string filePath = ExtractFilePath(toolName, inputStr);
+
+            // Track tool call index for checking off on tool_end
+            if (toolId != null)
+            {
+                // If tasks list is empty, add a synthetic entry
+                if (_tasksList.Items.Count == 0)
+                {
+                    _tasksList.Items.Add("Working...");
+                    _tasksList.Refresh();
+                }
+                _toolCallIndex[toolId] = _tasksList.Items.Count - 1;
+                _toolCallNames[toolId] = toolName;
+            }
+
+            _chatRenderer.AppendToolCall(summary, inputStr);
+            if (_currentSessionData != null)
+            {
+                ChatMessage toolMsg = new ChatMessage("tool", summary, "tool");
+                toolMsg.Detail = inputStr != null ? inputStr : "";
+                _currentSessionData.AddMessage(toolMsg);
+            }
+            _chatRenderer.ScrollToEnd();
+            _statusState.Text = string.Format("Tool: {0}", toolName);
+
+            // Add file path to output list if applicable
+            if (filePath != null)
+            {
+                AddOutputItem(filePath);
+            }
+
+            // Show file artifact in chat for file-creating tools
+            if (toolName == "write" || toolName == "Write"
+                || toolName == "xp_write_file" || toolName == "Edit" || toolName == "edit")
+            {
+                if (filePath != null)
+                {
+                    _chatRenderer.AppendFileArtifact(filePath);
+                }
+            }
+
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+            {
+                if (toolName == "write" || toolName == "Write"
+                    || toolName == "xp_write_file" || toolName == "Edit" || toolName == "edit")
+                {
+                    _merlin.AnimateDoMagic();
+                }
+                else if (toolName == "read" || toolName == "Read" || toolName == "View"
+                    || toolName == "view" || toolName == "xp_read_file")
+                {
+                    _merlin.AnimateReading();
+                }
+                else if (toolName == "xp_shell")
+                {
+                    _merlin.AnimateProcessing();
+                }
+                else
+                {
+                    _merlin.AnimateSearching();
+                }
+            }
+        }
+
+        private void OnToolEndReceived(object sender, ToolEndEventArgs e)
+        {
+            string toolId = e.ToolId;
+            bool success = e.Success;
+            string output = e.Output;
+
+            // Check off the task
+            if (toolId != null && _toolCallIndex.ContainsKey(toolId))
+            {
+                int idx = _toolCallIndex[toolId];
+                if (idx >= 0 && idx < _tasksList.Items.Count)
+                {
+                    _tasksList.SetItemChecked(idx, success);
+                    _tasksList.Refresh();
+                }
+                _toolCallIndex.Remove(toolId);
+            }
+
+            // Detect script-generated files for xp_shell tool
+            if (toolId != null && _toolCallNames.ContainsKey(toolId))
+            {
+                string completedToolName = _toolCallNames[toolId];
+                if (completedToolName == "xp_shell" && output != null && output.Length > 0)
+                {
+                    List<string> detectedPaths = ExtractWindowsPaths(output);
+                    for (int i = 0; i < detectedPaths.Count; i++)
+                    {
+                        string detectedPath = detectedPaths[i];
+                        _chatRenderer.AppendFileArtifact(detectedPath);
+                        AddOutputItem(detectedPath);
+                    }
+                }
+                _toolCallNames.Remove(toolId);
+            }
+
+            // Add output files if present
+            if (output != null && output.Length > 0 && output.Length < 500)
+            {
+                // Short output -- might be a file path or result summary
+                string trimmed = output.Trim();
+                if (trimmed.Length > 0 && trimmed.Length < 260)
+                {
+                    AddOutputItem(trimmed);
+                }
+            }
+
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+            {
+                if (success)
+                {
+                    _merlin.AnimateAnnounce();
+                }
+                else
+                {
+                    _merlin.AnimateConfused();
+                }
+            }
+        }
+
+        private void OnTitleChangedReceived(object sender, TitleChangedEventArgs e)
+        {
+            string title = e.Title;
+            if (_sessionId != null)
+            {
+                _sessionTitles[_sessionId] = title;
+                _statusSession.Text = title;
+                if (_currentSessionData != null)
+                {
+                    _currentSessionData.Title = title;
+                    _sessionStore.Save(_currentSessionData);
+                }
+                LoadPersistedSessions();
+            }
+        }
+
+        private void OnIdleReceived(object sender, EventArgs e)
+        {
+            // Check off the last intent
+            if (_tasksList.Items.Count > 0)
+            {
+                int lastIdx = _tasksList.Items.Count - 1;
+                if (!_tasksList.GetItemChecked(lastIdx))
+                {
+                    _tasksList.SetItemChecked(lastIdx, true);
+                    MarkLastIntentCompleted();
+                }
+                _tasksList.Refresh();
+            }
+
+            // Save any remaining reasoning
+            if (_currentSessionData != null && _reasoningBuffer.Length > 0)
+            {
+                _currentSessionData.AddMessage(new ChatMessage("assistant", _reasoningBuffer, "reasoning"));
+                _reasoningBuffer = "";
+            }
+
+            // Save assistant response to session
+            if (_currentSessionData != null && _assistantBuffer.Length > 0)
+            {
+                _currentSessionData.AddMessage(new ChatMessage("assistant", _assistantBuffer, DateTime.Now));
+                _currentSessionData.ContextFiles = new List<string>(_inputPanel.ContextFiles);
+                _currentSessionData.OutputFiles = new List<string>(_outputFiles);
+                _sessionStore.Save(_currentSessionData);
+                _assistantBuffer = "";
+            }
+
+            _chatRenderer.AppendNewline();
+            _chatRenderer.ScrollToEnd();
+            _statusState.Text = "Ready";
+
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+            {
+                _merlin.AnimateCongratulate();
+            }
+        }
+
+        private void OnErrorReceived(object sender, ErrorEventArgs e)
+        {
+            string errorMsg = e.Message;
+            _chatRenderer.AppendError(errorMsg);
+            _chatRenderer.ScrollToEnd();
+
+            if (_currentSessionData != null)
+            {
+                _currentSessionData.AddMessage(new ChatMessage("system", errorMsg, "error"));
+            }
+
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+            {
+                _merlin.AnimateSad();
+            }
+        }
+
+        // ====================================================================
+        // InputPanel event handlers
+        // ====================================================================
+
+        private void OnSendRequested(object sender, EventArgs e)
+        {
+            SendMessage();
+        }
+
+        private void OnStopRequested(object sender, EventArgs e)
+        {
+            // Abort the current message
+            if (_proxySessionId != null)
+            {
+                try
+                {
+                    _proxyClient.AbortMessage(_proxySessionId);
+                }
+                catch
+                {
+                    // Best effort abort
+                }
+            }
+
+            if (_messageWorker.IsBusy)
+            {
+                _messageWorker.CancelAsync();
+            }
+
+            _chatRenderer.AppendSystemMessage("Response stopped by user.");
+            _chatRenderer.FinalizeMessage();
+            _chatRenderer.ScrollToEnd();
+            _inputPanel.IsBusy = false;
+            _statusState.Text = "Ready";
+        }
+
+        private void OnFilesAttached(object sender, AttachEventArgs e)
+        {
+            // Add attached files to the context sidebar list
+            List<string> files = e.Files;
+            for (int i = 0; i < files.Count; i++)
+            {
+                string fileName = Path.GetFileName(files[i]);
+                _contextList.Items.Add(fileName);
+            }
         }
 
         // ====================================================================
@@ -1511,11 +1594,11 @@ namespace Incantation
 
             try
             {
-                JObject inputObj = JObject.Parse(input);
+                Newtonsoft.Json.Linq.JObject inputObj = Newtonsoft.Json.Linq.JObject.Parse(input);
 
                 if (toolName == "xp_shell")
                 {
-                    JToken cmdToken = inputObj.SelectToken("command");
+                    Newtonsoft.Json.Linq.JToken cmdToken = inputObj.SelectToken("command");
                     if (cmdToken != null)
                     {
                         string cmd = (string)cmdToken;
@@ -1529,23 +1612,23 @@ namespace Incantation
                 }
                 else if (toolName == "xp_read_file")
                 {
-                    JToken pathToken = inputObj.SelectToken("file_path");
+                    Newtonsoft.Json.Linq.JToken pathToken = inputObj.SelectToken("file_path");
                     if (pathToken != null)
                     {
-                        return string.Format("Read: {0}", System.IO.Path.GetFileName((string)pathToken));
+                        return string.Format("Read: {0}", Path.GetFileName((string)pathToken));
                     }
                 }
                 else if (toolName == "xp_write_file")
                 {
-                    JToken pathToken = inputObj.SelectToken("file_path");
+                    Newtonsoft.Json.Linq.JToken pathToken = inputObj.SelectToken("file_path");
                     if (pathToken != null)
                     {
-                        return string.Format("Write: {0}", System.IO.Path.GetFileName((string)pathToken));
+                        return string.Format("Write: {0}", Path.GetFileName((string)pathToken));
                     }
                 }
                 else if (toolName == "xp_list_directory")
                 {
-                    JToken pathToken = inputObj.SelectToken("directory_path");
+                    Newtonsoft.Json.Linq.JToken pathToken = inputObj.SelectToken("directory_path");
                     if (pathToken != null)
                     {
                         return string.Format("List: {0}", (string)pathToken);
@@ -1571,8 +1654,8 @@ namespace Incantation
             {
                 try
                 {
-                    JObject inputObj = JObject.Parse(input);
-                    JToken pathToken = inputObj.SelectToken("file_path");
+                    Newtonsoft.Json.Linq.JObject inputObj = Newtonsoft.Json.Linq.JObject.Parse(input);
+                    Newtonsoft.Json.Linq.JToken pathToken = inputObj.SelectToken("file_path");
                     if (pathToken != null) return (string)pathToken;
                     pathToken = inputObj.SelectToken("path");
                     if (pathToken != null) return (string)pathToken;
@@ -1588,27 +1671,42 @@ namespace Incantation
             return null;
         }
 
+        private static List<string> ExtractWindowsPaths(string text)
+        {
+            List<string> paths = new List<string>();
+            if (text == null || text.Length == 0) return paths;
+
+            // Match patterns like C:\path\to\file.ext or D:\something\foo.bar
+            Regex pathRegex = new Regex(@"[A-Za-z]:\\[^\s""<>|*?]+\.\w+");
+            MatchCollection matches = pathRegex.Matches(text);
+            for (int i = 0; i < matches.Count; i++)
+            {
+                string matched = matches[i].Value;
+                // Avoid duplicates
+                bool found = false;
+                for (int j = 0; j < paths.Count; j++)
+                {
+                    if (paths[j] == matched)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    paths.Add(matched);
+                }
+            }
+            return paths;
+        }
+
         // ====================================================================
         // UI event handlers
         // ====================================================================
 
-        private void OnSendClick(object sender, EventArgs e)
+        private void OnFileAttachClick(object sender, EventArgs e)
         {
-            SendMessage();
-        }
-
-        private void OnInputKeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.KeyCode == Keys.Enter && !e.Shift)
-            {
-                e.Handled = true;
-                e.SuppressKeyPress = true;
-                SendMessage();
-            }
-        }
-
-        private void OnAttachClick(object sender, EventArgs e)
-        {
+            // File menu attach -- opens dialog and adds files to InputPanel + context sidebar
             OpenFileDialog dlg = new OpenFileDialog();
             dlg.Title = "Attach File";
             dlg.Filter = "All files (*.*)|*.*|C# files (*.cs)|*.cs|Text files (*.txt)|*.txt";
@@ -1616,94 +1714,30 @@ namespace Incantation
             if (dlg.ShowDialog(this) == DialogResult.OK)
             {
                 string[] files = dlg.FileNames;
+                List<string> contextFiles = _inputPanel.ContextFiles;
                 for (int i = 0; i < files.Length; i++)
                 {
                     string filePath = files[i];
-                    string fileName = System.IO.Path.GetFileName(filePath);
+                    string fileName = Path.GetFileName(filePath);
 
-                    _contextFiles.Add(filePath);
-                    _attachList.Items.Add(fileName);
+                    contextFiles.Add(filePath);
                     _contextList.Items.Add(fileName);
                 }
-                UpdateAttachListVisibility();
             }
             dlg.Dispose();
-        }
-
-        private void OnRemoveAttachment(object sender, EventArgs e)
-        {
-            int idx = _attachList.SelectedIndex;
-            if (idx >= 0 && idx < _contextFiles.Count)
-            {
-                _contextFiles.RemoveAt(idx);
-                _attachList.Items.RemoveAt(idx);
-                if (idx < _contextList.Items.Count)
-                {
-                    _contextList.Items.RemoveAt(idx);
-                }
-                UpdateAttachListVisibility();
-            }
         }
 
         private void OnRemoveContext(object sender, EventArgs e)
         {
             int idx = _contextList.SelectedIndex;
-            if (idx >= 0 && idx < _contextFiles.Count)
+            if (idx < 0) return;
+
+            List<string> contextFiles = _inputPanel.ContextFiles;
+            if (idx < contextFiles.Count)
             {
-                _contextFiles.RemoveAt(idx);
-                _contextList.Items.RemoveAt(idx);
-                if (idx < _attachList.Items.Count)
-                {
-                    _attachList.Items.RemoveAt(idx);
-                }
-                UpdateAttachListVisibility();
+                contextFiles.RemoveAt(idx);
             }
-        }
-
-        private void OnDrawAttachItem(object sender, DrawItemEventArgs e)
-        {
-            if (e.Index < 0 || e.Index >= _contextFiles.Count) return;
-
-            e.DrawBackground();
-
-            string filePath = _contextFiles[e.Index];
-            string fileName = System.IO.Path.GetFileName(filePath);
-
-            try
-            {
-                Icon fileIcon = null;
-                if (System.IO.File.Exists(filePath))
-                {
-                    fileIcon = System.Drawing.Icon.ExtractAssociatedIcon(filePath);
-                }
-                if (fileIcon != null)
-                {
-                    e.Graphics.DrawIcon(fileIcon, new Rectangle(e.Bounds.X + 2, e.Bounds.Y + 2, 16, 16));
-                    fileIcon.Dispose();
-                }
-            }
-            catch { }
-
-            using (SolidBrush brush = new SolidBrush(e.ForeColor))
-            {
-                e.Graphics.DrawString(fileName, e.Font, brush, e.Bounds.X + 22, e.Bounds.Y + 3);
-            }
-
-            e.DrawFocusRectangle();
-        }
-
-        private void UpdateAttachListVisibility()
-        {
-            if (_contextFiles.Count > 0)
-            {
-                _attachList.Height = System.Math.Min(_contextFiles.Count * 20 + 4, 64);
-                _attachList.Visible = true;
-            }
-            else
-            {
-                _attachList.Height = 0;
-                _attachList.Visible = false;
-            }
+            _contextList.Items.RemoveAt(idx);
         }
 
         private void OnOutputDoubleClick(object sender, EventArgs e)
@@ -1714,7 +1748,7 @@ namespace Incantation
             string item = _outputFiles[idx];
             try
             {
-                if (System.IO.File.Exists(item))
+                if (File.Exists(item))
                 {
                     System.Diagnostics.Process.Start(item);
                 }
@@ -1744,13 +1778,13 @@ namespace Incantation
             e.DrawBackground();
 
             string filePath = _outputFiles[e.Index];
-            string fileName = System.IO.Path.GetFileName(filePath);
+            string fileName = Path.GetFileName(filePath);
 
             // Draw file icon
             try
             {
                 Icon fileIcon = null;
-                if (System.IO.File.Exists(filePath))
+                if (File.Exists(filePath))
                 {
                     fileIcon = System.Drawing.Icon.ExtractAssociatedIcon(filePath);
                 }
@@ -1789,6 +1823,8 @@ namespace Incantation
             _outputList.Items.Clear();
             _outputFiles.Clear();
             _toolCallIndex.Clear();
+            _toolCallNames.Clear();
+            _inputPanel.IsBusy = false;
             _statusSession.Text = "No Session";
             _statusState.Text = "Connecting...";
             _chatRenderer.AppendSystemMessage("Creating new session...");
@@ -1804,8 +1840,7 @@ namespace Incantation
 
         private void OnCopy(object sender, EventArgs e)
         {
-            // Copy not yet implemented for ChatPanel
-
+            _chatBox.CopySelectedText();
         }
 
         private void OnClearHistory(object sender, EventArgs e)
@@ -1816,6 +1851,7 @@ namespace Incantation
             _outputList.Items.Clear();
             _outputFiles.Clear();
             _toolCallIndex.Clear();
+            _toolCallNames.Clear();
             _chatRenderer.AppendSystemMessage("Chat history cleared.");
             _chatRenderer.ScrollToEnd();
         }
@@ -1823,11 +1859,13 @@ namespace Incantation
         private void OnToggleSessionsPanel(object sender, EventArgs e)
         {
             _outerSplit.Panel1Collapsed = !_outerSplit.Panel1Collapsed;
+            _viewSessionsMenuItem.Checked = !_outerSplit.Panel1Collapsed;
         }
 
         private void OnToggleDetailsPanel(object sender, EventArgs e)
         {
             _innerSplit.Panel2Collapsed = !_innerSplit.Panel2Collapsed;
+            _viewDetailsMenuItem.Checked = !_innerSplit.Panel2Collapsed;
         }
 
         private void OnSettings(object sender, EventArgs e)
@@ -1839,6 +1877,13 @@ namespace Incantation
                 _proxyClient.BaseUrl = _proxyAddress;
                 _chatRenderer.AppendSystemMessage(string.Format("Proxy address changed to: {0}", _proxyAddress));
                 _chatRenderer.ScrollToEnd();
+
+                // Save settings on proxy address change
+                if (_appSettings != null)
+                {
+                    _appSettings.ProxyAddress = _proxyAddress;
+                    _appSettings.Save(_settingsPath);
+                }
             }
         }
 
@@ -1860,7 +1905,7 @@ namespace Incantation
                     if (!_merlin.Initialize())
                     {
                         _chatRenderer.AppendSystemMessage(
-                            string.Format("Merlin unavailable: {0}", _merlin.LastError ?? "unknown error"));
+                            string.Format("Merlin unavailable: {0}", _merlin.LastError != null ? _merlin.LastError : "unknown error"));
                         _chatRenderer.ScrollToEnd();
                         return;
                     }
@@ -1875,6 +1920,13 @@ namespace Incantation
                 {
                     _merlin.Hide();
                 }
+            }
+
+            // Save settings on Merlin toggle change
+            if (_appSettings != null)
+            {
+                _appSettings.MerlinEnabled = _merlinEnabled;
+                _appSettings.Save(_settingsPath);
             }
         }
 
@@ -1916,31 +1968,24 @@ namespace Incantation
                 string[] models = _proxyClient.ListModels();
                 if (models.Length > 0)
                 {
-                    _cboModel.Items.Clear();
+                    ComboBox modelCombo = _inputPanel.ModelCombo;
+                    modelCombo.Items.Clear();
                     for (int i = 0; i < models.Length; i++)
                     {
-                        _cboModel.Items.Add(models[i]);
+                        modelCombo.Items.Add(models[i]);
                     }
-                    _cboModel.SelectedIndex = 0;
+                    modelCombo.SelectedIndex = 0;
                 }
             }
             catch
             {
-                // Models fetch failed — keep default
+                // Models fetch failed -- keep default
             }
         }
 
         private string GetSelectedWorkDir()
         {
-            if (_cboWorkDir.SelectedItem != null)
-            {
-                return _cboWorkDir.SelectedItem.ToString();
-            }
-            if (_cboWorkDir.Text.Length > 0)
-            {
-                return _cboWorkDir.Text;
-            }
-            return Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            return _inputPanel.SelectedWorkDir;
         }
 
         private static string BuildConversationHistory(SessionData session)
