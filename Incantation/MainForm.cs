@@ -22,7 +22,7 @@ namespace Incantation
 
         private ProxyClient _proxyClient;
         private ChatHistory _chatHistory;
-        private ChatRenderer _chatRenderer;
+        private IChatRenderer _chatRenderer;
         private MerlinHelper _merlin;
         private System.Diagnostics.Process _toolServerProcess;
 
@@ -41,7 +41,7 @@ namespace Incantation
         private Button _btnNewSession;
 
         // Center — Chat
-        private RichTextBox _chatBox;
+        private ChatPanel _chatBox;
         private TextBox _inputBox;
         private Panel _inputPanel;
         private Panel _buttonPanel;
@@ -97,7 +97,7 @@ namespace Incantation
 
             InitializeComponents();
             _chatHistory = new ChatHistory();
-            _chatRenderer = new ChatRenderer(_chatBox);
+            _chatRenderer = _chatBox;
             _proxyClient = new ProxyClient(_proxyAddress);
             _sessionStore = new SessionStore(Application.StartupPath);
         }
@@ -201,6 +201,13 @@ namespace Incantation
             _sessionList.BackColor = GradientHeader.SidebarBg;
             _sessionList.SelectedIndexChanged += new EventHandler(this.OnSessionListSelected);
             _sessionList.DrawItem += new DrawItemEventHandler(this.OnDrawSessionItem);
+            _sessionList.MouseDown += new MouseEventHandler(this.OnSessionListMouseDown);
+
+            ContextMenu sessionCtx = new ContextMenu();
+            sessionCtx.MenuItems.Add(new MenuItem("Rename...", new EventHandler(this.OnRenameSession)));
+            sessionCtx.MenuItems.Add(new MenuItem("-"));
+            sessionCtx.MenuItems.Add(new MenuItem("Delete", new EventHandler(this.OnDeleteSession)));
+            _sessionList.ContextMenu = sessionCtx;
 
             _btnNewSession = new Button();
             _btnNewSession.Text = "New Session";
@@ -309,12 +316,8 @@ namespace Incantation
             // ============================================================
             // Center — Chat area
             // ============================================================
-            _chatBox = new RichTextBox();
-            _chatBox.ReadOnly = true;
+            _chatBox = new ChatPanel();
             _chatBox.Dock = DockStyle.Fill;
-            _chatBox.BackColor = Color.White;
-            _chatBox.ScrollBars = RichTextBoxScrollBars.Vertical;
-            _chatBox.Font = new Font("Tahoma", 8.25f);
 
             _inputPanel = new Panel();
             _inputPanel.Dock = DockStyle.Fill;
@@ -554,6 +557,84 @@ namespace Incantation
             }
         }
 
+        private void OnSessionListMouseDown(object sender, MouseEventArgs e)
+        {
+            // Select the item under the right-click so context menu operates on the right session
+            if (e.Button == MouseButtons.Right)
+            {
+                int idx = _sessionList.IndexFromPoint(e.Location);
+                if (idx >= 0)
+                {
+                    _sessionList.SelectedIndex = idx;
+                }
+            }
+        }
+
+        private void OnRenameSession(object sender, EventArgs e)
+        {
+            int idx = _sessionList.SelectedIndex;
+            if (idx < 0 || idx >= _sessionIds.Count) return;
+
+            string sid = _sessionIds[idx];
+            string currentTitle = _sessionTitles.ContainsKey(sid) ? _sessionTitles[sid] : "";
+            string newTitle = ShowInputDialog("Rename session:", currentTitle);
+
+            if (newTitle != null && newTitle.Length > 0)
+            {
+                _sessionTitles[sid] = newTitle;
+                SessionData sd = _sessionStore.Load(sid);
+                if (sd != null)
+                {
+                    sd.Title = newTitle;
+                    _sessionStore.Save(sd);
+                }
+                if (sid == _sessionId)
+                {
+                    if (_currentSessionData != null) _currentSessionData.Title = newTitle;
+                    _statusSession.Text = newTitle;
+                }
+                LoadPersistedSessions();
+            }
+        }
+
+        private void OnDeleteSession(object sender, EventArgs e)
+        {
+            int idx = _sessionList.SelectedIndex;
+            if (idx < 0 || idx >= _sessionIds.Count) return;
+
+            string sid = _sessionIds[idx];
+            string title = _sessionTitles.ContainsKey(sid) ? _sessionTitles[sid] : TruncateId(sid);
+
+            DialogResult result = MessageBox.Show(
+                string.Format("Delete session \"{0}\"?", title),
+                "Delete Session",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (result == DialogResult.Yes)
+            {
+                _sessionStore.Delete(sid);
+                _sessionTitles.Remove(sid);
+
+                // If deleting the active session, clear the UI
+                if (sid == _sessionId)
+                {
+                    _sessionId = null;
+                    _proxySessionId = null;
+                    _currentSessionData = null;
+                    _chatRenderer.Clear();
+                    _chatHistory.Clear();
+                    _tasksList.Items.Clear();
+                    _outputList.Items.Clear();
+                    _outputFiles.Clear();
+                    _toolCallIndex.Clear();
+                    _statusSession.Text = "No Session";
+                }
+
+                LoadPersistedSessions();
+            }
+        }
+
         private void StartToolServer()
         {
             try
@@ -685,7 +766,7 @@ namespace Incantation
             _statusConnection.Text = "Connected";
             _statusState.Text = "Ready";
 
-            // Only set _sessionId and create persisted session if this is a new session
+            // Only set _sessionId if this is a new session
             // (not a lazy proxy creation for a resumed session)
             if (_sessionId == null)
             {
@@ -697,14 +778,10 @@ namespace Incantation
                 _outputFiles.Clear();
                 _toolCallIndex.Clear();
 
-                // Create persisted session data
-                _currentSessionData = new SessionData(sid);
-                _sessionStore.Save(_currentSessionData);
-
+                // Don't create persisted session yet — defer to first message
                 _chatRenderer.AppendSystemMessage("Session created. You can start chatting.");
                 _chatRenderer.ScrollToEnd();
 
-                LoadPersistedSessions();
                 FetchModels();
             }
             else
@@ -764,7 +841,7 @@ namespace Incantation
 
             _sessionId = selectedId;
             _currentSessionData = loaded;
-            _chatBox.Clear();
+            _chatRenderer.Clear();
             _chatHistory.Clear();
             _tasksList.Items.Clear();
             _outputList.Items.Clear();
@@ -849,7 +926,7 @@ namespace Incantation
             // Don't create a proxy session now -- it will be created lazily on first message
             _proxySessionId = null;
 
-            LoadPersistedSessions();
+            _sessionList.Invalidate();  // Repaint to update active indicator
         }
 
         // ====================================================================
@@ -892,9 +969,24 @@ namespace Incantation
 
             _inputBox.Text = "";
 
-            // Auto-title from first message if session has no title
-            if (_currentSessionData != null && (_currentSessionData.Title == null || _currentSessionData.Title.Length == 0))
+            // Create persisted session on first message (deferred from OnSessionCompleted)
+            if (_currentSessionData == null && _sessionId != null)
             {
+                _currentSessionData = new SessionData(_sessionId);
+                string autoTitle = text;
+                if (autoTitle.Length > 50)
+                {
+                    autoTitle = autoTitle.Substring(0, 47) + "...";
+                }
+                _currentSessionData.Title = autoTitle;
+                _sessionTitles[_sessionId] = autoTitle;
+                _statusSession.Text = autoTitle;
+                _sessionStore.Save(_currentSessionData);
+                LoadPersistedSessions();
+            }
+            else if (_currentSessionData != null && (_currentSessionData.Title == null || _currentSessionData.Title.Length == 0))
+            {
+                // Auto-title from first message if session has no title
                 string autoTitle = text;
                 if (autoTitle.Length > 50)
                 {
@@ -1423,7 +1515,7 @@ namespace Incantation
             _sessionId = null;
             _proxySessionId = null;
             _pendingMessage = null;
-            _chatBox.Clear();
+            _chatRenderer.Clear();
             _chatHistory.Clear();
             _tasksList.Items.Clear();
             _outputList.Items.Clear();
@@ -1444,15 +1536,13 @@ namespace Incantation
 
         private void OnCopy(object sender, EventArgs e)
         {
-            if (_chatBox.SelectionLength > 0)
-            {
-                Clipboard.SetText(_chatBox.SelectedText);
-            }
+            // Copy not yet implemented for ChatPanel
+
         }
 
         private void OnClearHistory(object sender, EventArgs e)
         {
-            _chatBox.Clear();
+            _chatRenderer.Clear();
             _chatHistory.Clear();
             _tasksList.Items.Clear();
             _outputList.Items.Clear();

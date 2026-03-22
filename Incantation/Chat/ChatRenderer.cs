@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace Incantation.Chat
 {
-    public class ChatRenderer
+    public class ChatRenderer : IChatRenderer
     {
         private RichTextBox _rtb;
         private bool _inCodeBlock;
@@ -834,6 +834,17 @@ namespace Incantation.Chat
             _rtb.SelectionColor = ColorContent;
             _rtb.SelectionBackColor = ColorCodeBackground;
             _rtb.Select(_rtb.TextLength, 0);
+        }
+
+        public void Clear()
+        {
+            _rtb.Clear();
+            _inCodeBlock = false;
+            _inReasoning = false;
+            _lineBuffer = new StringBuilder();
+            _skippingLangHint = false;
+            _inTable = false;
+            _tableRows.Clear();
         }
 
         private void AppendFormatted(string text, Font font, Color color)

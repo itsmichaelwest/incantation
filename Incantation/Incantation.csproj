@@ -43,10 +43,13 @@
     <Compile Include="Net\SseParser.cs" />
     <Compile Include="Chat\ChatMessage.cs" />
     <Compile Include="Chat\ChatHistory.cs" />
+    <Compile Include="Chat\IChatRenderer.cs" />
     <Compile Include="Chat\ChatRenderer.cs" />
+    <Compile Include="Chat\HtmlChatRenderer.cs" />
     <Compile Include="Chat\SessionStore.cs" />
     <Compile Include="Agent\MerlinHelper.cs" />
     <Compile Include="UI\GradientHeader.cs" />
+    <Compile Include="UI\ChatPanel.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\Incantation.ToolServer\bin\Debug\Incantation.ToolServer.exe">

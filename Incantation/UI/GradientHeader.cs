@@ -38,8 +38,20 @@ namespace Incantation.UI
         public static void PaintSessionItem(Graphics g, Rectangle bounds, string title,
             string timeText, bool selected, bool active)
         {
-            // Background
-            if (selected)
+            Color titleColor = Color.FromArgb(30, 30, 30);
+            Color timeColor = Color.Gray;
+
+            // Background — active session gets prominent highlight
+            if (active)
+            {
+                using (SolidBrush bg = new SolidBrush(LunaBlueStart))
+                {
+                    g.FillRectangle(bg, bounds);
+                }
+                titleColor = Color.White;
+                timeColor = Color.FromArgb(190, 205, 230);
+            }
+            else if (selected)
             {
                 using (SolidBrush bg = new SolidBrush(SelectedBg))
                 {
@@ -59,29 +71,23 @@ namespace Incantation.UI
                 }
             }
 
-            // Active indicator dot
-            if (active)
-            {
-                using (SolidBrush dot = new SolidBrush(Color.FromArgb(0, 128, 0)))
-                {
-                    g.FillEllipse(dot, bounds.X + 6, bounds.Y + 8, 8, 8);
-                }
-            }
-
             // Title (line 1)
-            int textX = active ? bounds.X + 18 : bounds.X + 8;
-            Color titleColor = selected ? Color.Black : Color.FromArgb(30, 30, 30);
+            int textX = bounds.X + 8;
             using (Font titleFont = new Font("Tahoma", 8.25f, FontStyle.Bold))
             {
-                g.DrawString(title, titleFont, new SolidBrush(titleColor),
-                    textX, bounds.Y + 4);
+                using (SolidBrush brush = new SolidBrush(titleColor))
+                {
+                    g.DrawString(title, titleFont, brush, textX, bounds.Y + 4);
+                }
             }
 
             // Timestamp (line 2)
             using (Font timeFont = new Font("Tahoma", 7.5f, FontStyle.Regular))
             {
-                g.DrawString(timeText, timeFont, Brushes.Gray,
-                    textX, bounds.Y + 20);
+                using (SolidBrush brush = new SolidBrush(timeColor))
+                {
+                    g.DrawString(timeText, timeFont, brush, textX, bounds.Y + 20);
+                }
             }
         }
     }

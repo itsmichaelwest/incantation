@@ -105,11 +105,17 @@ namespace Incantation.Chat
         {
             get
             {
-                TimeSpan age = DateTime.Now - _modified;
+                // Use last message timestamp, fall back to modified
+                DateTime ts = _modified;
+                if (_messages != null && _messages.Count > 0)
+                {
+                    ts = _messages[_messages.Count - 1].Timestamp;
+                }
+                TimeSpan age = DateTime.Now - ts;
                 if (age.TotalMinutes < 1) return "just now";
                 if (age.TotalMinutes < 60) return string.Format("{0}m ago", (int)age.TotalMinutes);
                 if (age.TotalHours < 24) return string.Format("{0}h ago", (int)age.TotalHours);
-                return _modified.ToString("MM/dd");
+                return ts.ToString("MM/dd");
             }
         }
     }
@@ -133,7 +139,6 @@ namespace Incantation.Chat
             {
                 return;
             }
-            data.Modified = DateTime.Now;
             string path = GetFilePath(data.SessionId);
             string json = JsonConvert.SerializeObject(data, Formatting.Indented);
             File.WriteAllText(path, json);
@@ -184,7 +189,7 @@ namespace Incantation.Chat
                 }
             }
 
-            // Sort by created descending (stable order — doesn't change when messages arrive)
+            // Sort by modified descending — most recently used session first
             result.Sort(new SessionCreatedComparer());
             return result;
         }
@@ -215,8 +220,8 @@ namespace Incantation.Chat
     {
         public int Compare(SessionData a, SessionData b)
         {
-            // Descending — newest session first, stable order
-            return b.Created.CompareTo(a.Created);
+            // Descending — most recently used session first
+            return b.Modified.CompareTo(a.Modified);
         }
     }
 }
