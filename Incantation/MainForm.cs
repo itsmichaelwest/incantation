@@ -19,6 +19,7 @@ namespace Incantation
         private string _proxySessionId;  // live proxy session ID (null until first message)
         private string _pendingMessage;  // queued message waiting for proxy session creation
         private bool _merlinEnabled = true;
+        private ToolStripMenuItem _merlinMenuItem;
 
         private ProxyClient _proxyClient;
         private ChatHistory _chatHistory;
@@ -136,7 +137,9 @@ namespace Incantation
             ToolStripMenuItem toolsMenu = new ToolStripMenuItem("Tools");
             toolsMenu.DropDownItems.Add(new ToolStripMenuItem("Settings", null, new EventHandler(this.OnSettings)));
             toolsMenu.DropDownItems.Add(new ToolStripSeparator());
-            toolsMenu.DropDownItems.Add(new ToolStripMenuItem("Merlin On/Off", null, new EventHandler(this.OnToggleMerlin)));
+            _merlinMenuItem = new ToolStripMenuItem("Merlin On/Off", null, new EventHandler(this.OnToggleMerlin));
+            _merlinMenuItem.Checked = _merlinEnabled;
+            toolsMenu.DropDownItems.Add(_merlinMenuItem);
 
             ToolStripMenuItem helpMenu = new ToolStripMenuItem("Help");
             helpMenu.DropDownItems.Add(new ToolStripMenuItem("About", null, new EventHandler(this.OnAbout)));
@@ -469,6 +472,9 @@ namespace Incantation
 
             this.Load += new EventHandler(this.OnFormLoad);
             this.FormClosing += new FormClosingEventHandler(this.OnFormClosing);
+            this.Move += new EventHandler(this.OnFormMoveOrResize);
+            this.Resize += new EventHandler(this.OnFormMoveOrResize);
+            _outerSplit.SplitterMoved += new SplitterEventHandler(this.OnSplitterMoved);
         }
 
         // ====================================================================
@@ -546,17 +552,16 @@ namespace Incantation
             }
 
             _merlin = new MerlinHelper();
-            try
+            if (_merlin.Initialize())
             {
-                if (_merlin.Initialize())
-                {
-                    _merlin.Show();
-                    _merlin.MoveNearForm(this);
-                    _merlin.AnimateGreet();
-                }
+                _merlin.Show();
+                RepositionMerlin();
+                _merlin.AnimateGreet();
             }
-            catch
+            else
             {
+                _chatRenderer.AppendSystemMessage(
+                    string.Format("Merlin unavailable: {0}", _merlin.LastError ?? "unknown error"));
             }
 
             _chatRenderer.AppendSystemMessage("Welcome to Incantation - AI Coding Assistant");
@@ -774,6 +779,10 @@ namespace Incantation
             }
             if (_merlin != null)
             {
+                if (_merlin.IsAvailable && _merlinEnabled)
+                {
+                    _merlin.AnimateWave();
+                }
                 _merlin.Dispose();
                 _merlin = null;
             }
@@ -813,7 +822,7 @@ namespace Incantation
                 _statusState.Text = "Ready";
                 _chatRenderer.AppendError(string.Format("Connection failed: {0}", e.Error.Message));
                 _chatRenderer.ScrollToEnd();
-                if (_merlin != null && _merlin.IsAvailable) _merlin.AnimateSad();
+                if (_merlin != null && _merlin.IsAvailable && _merlinEnabled) _merlin.AnimateSurprised();
                 return;
             }
 
@@ -824,7 +833,7 @@ namespace Incantation
                 _statusState.Text = "Ready";
                 _chatRenderer.AppendError("Could not connect to proxy. Is it running?");
                 _chatRenderer.ScrollToEnd();
-                if (_merlin != null && _merlin.IsAvailable) _merlin.AnimateSad();
+                if (_merlin != null && _merlin.IsAvailable && _merlinEnabled) _merlin.AnimateConfused();
                 return;
             }
 
@@ -855,7 +864,7 @@ namespace Incantation
                 _chatRenderer.ScrollToEnd();
             }
 
-            if (_merlin != null && _merlin.IsAvailable) _merlin.AnimateIdle();
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled) _merlin.AnimatePleased();
 
             // Send pending message if one was queued
             if (_pendingMessage != null)
@@ -1119,7 +1128,7 @@ namespace Incantation
             _statusState.Text = "Thinking...";
             if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
             {
-                _merlin.AnimateThinking();
+                _merlin.AnimateAcknowledge();
             }
 
             if (_proxySessionId == null)
@@ -1188,6 +1197,10 @@ namespace Incantation
                             ChatMessage intentMsg = new ChatMessage("system", intentText, "intent");
                             _currentSessionData.AddMessage(intentMsg);
                         }
+                        if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+                        {
+                            _merlin.AnimateExplain();
+                        }
                     }
                 }
                 else if (eventType == "reasoning")
@@ -1200,6 +1213,10 @@ namespace Incantation
                         _chatRenderer.AppendReasoning(reasoningText);
                         _chatRenderer.ScrollToEnd();
                         _statusState.Text = "Thinking...";
+                        if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+                        {
+                            _merlin.AnimateThinking();
+                        }
                     }
                 }
                 else if (eventType == "delta")
@@ -1277,7 +1294,24 @@ namespace Incantation
 
                     if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
                     {
-                        _merlin.AnimateSearching();
+                        if (toolName == "write" || toolName == "Write"
+                            || toolName == "xp_write_file" || toolName == "Edit" || toolName == "edit")
+                        {
+                            _merlin.AnimateDoMagic();
+                        }
+                        else if (toolName == "read" || toolName == "Read" || toolName == "View"
+                            || toolName == "view" || toolName == "xp_read_file")
+                        {
+                            _merlin.AnimateReading();
+                        }
+                        else if (toolName == "xp_shell")
+                        {
+                            _merlin.AnimateProcessing();
+                        }
+                        else
+                        {
+                            _merlin.AnimateSearching();
+                        }
                     }
                 }
                 else if (eventType == "tool_end")
@@ -1310,6 +1344,18 @@ namespace Incantation
                             {
                                 AddOutputItem(trimmed);
                             }
+                        }
+                    }
+
+                    if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+                    {
+                        if (success)
+                        {
+                            _merlin.AnimateAnnounce();
+                        }
+                        else
+                        {
+                            _merlin.AnimateConfused();
                         }
                     }
                 }
@@ -1364,7 +1410,7 @@ namespace Incantation
                     _statusState.Text = "Ready";
                     if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
                     {
-                        _merlin.AnimateIdle();
+                        _merlin.AnimateCongratulate();
                     }
                 }
                 else if (eventType == "error")
@@ -1414,7 +1460,7 @@ namespace Incantation
 
             _chatRenderer.FinalizeMessage();
             _chatRenderer.ScrollToEnd();
-            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled) _merlin.AnimateIdle();
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled) _merlin.AnimatePleased();
         }
 
         // ====================================================================
@@ -1788,18 +1834,55 @@ namespace Incantation
         private void OnToggleMerlin(object sender, EventArgs e)
         {
             _merlinEnabled = !_merlinEnabled;
-            if (_merlin != null && _merlin.IsAvailable)
+            if (_merlinMenuItem != null)
             {
-                if (_merlinEnabled)
+                _merlinMenuItem.Checked = _merlinEnabled;
+            }
+
+            if (_merlinEnabled)
+            {
+                // Retry initialization if not currently available
+                if (_merlin == null || !_merlin.IsAvailable)
                 {
-                    _merlin.Show();
-                    _merlin.AnimateGreet();
+                    if (_merlin != null) _merlin.Dispose();
+                    _merlin = new MerlinHelper();
+                    if (!_merlin.Initialize())
+                    {
+                        _chatRenderer.AppendSystemMessage(
+                            string.Format("Merlin unavailable: {0}", _merlin.LastError ?? "unknown error"));
+                        _chatRenderer.ScrollToEnd();
+                        return;
+                    }
                 }
-                else
+                _merlin.Show();
+                RepositionMerlin();
+                _merlin.AnimateGreet();
+            }
+            else
+            {
+                if (_merlin != null && _merlin.IsAvailable)
                 {
                     _merlin.Hide();
                 }
             }
+        }
+
+        private void RepositionMerlin()
+        {
+            if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
+            {
+                _merlin.MoveToControl(_leftPanel);
+            }
+        }
+
+        private void OnFormMoveOrResize(object sender, EventArgs e)
+        {
+            RepositionMerlin();
+        }
+
+        private void OnSplitterMoved(object sender, SplitterEventArgs e)
+        {
+            RepositionMerlin();
         }
 
         private void OnAbout(object sender, EventArgs e)

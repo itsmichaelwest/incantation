@@ -18,6 +18,7 @@ namespace Incantation.Agent
         private Type _charsType;
         private Type _charType;
         private string _lastAnimation;
+        private string _lastError;
 
         public bool IsAvailable
         {
@@ -29,60 +30,106 @@ namespace Incantation.Agent
             get { return _isVisible; }
         }
 
+        public string LastError
+        {
+            get { return _lastError; }
+        }
+
         public bool Initialize()
         {
+            _lastError = null;
+
+            _agentType = Type.GetTypeFromProgID("Agent.Control.2");
+            if (_agentType == null)
+            {
+                _lastError = "Agent.Control.2 COM class is not registered.";
+                return false;
+            }
+
             try
             {
-                _agentType = Type.GetTypeFromProgID("Agent.Control.2");
-                if (_agentType == null)
-                {
-                    return false;
-                }
-
                 _agentControl = Activator.CreateInstance(_agentType);
+            }
+            catch (Exception ex)
+            {
+                _lastError = "Failed to create Agent control: " + ex.Message;
+                return false;
+            }
 
-                // Get Characters collection
+            // Required when created outside an ActiveX container
+            try
+            {
+                _agentType.InvokeMember("Connected",
+                    BindingFlags.SetProperty, null, _agentControl, new object[] { true });
+            }
+            catch (Exception ex)
+            {
+                _lastError = "Failed to connect Agent control: " + ex.Message;
+                return false;
+            }
+
+            try
+            {
                 _characters = _agentType.InvokeMember("Characters",
                     BindingFlags.GetProperty, null, _agentControl, null);
                 _charsType = _characters.GetType();
+            }
+            catch (Exception ex)
+            {
+                _lastError = "Failed to access Characters collection: " + ex.Message;
+                return false;
+            }
 
-                // Try loading Merlin from known paths
-                string[] paths = new string[] {
-                    @"C:\Windows\MSAgent\chars\Merlin.acs",
-                    @"C:\Windows\srchasst\chars\Merlin.acs",
-                    @"C:\WINDOWS\MSAgent\chars\Merlin.acs",
-                    @"C:\WINDOWS\srchasst\chars\Merlin.acs"
-                };
+            // Try loading Merlin from known paths
+            string[] paths = new string[] {
+                @"C:\Windows\MSAgent\chars\Merlin.acs",
+                @"C:\Windows\srchasst\chars\Merlin.acs",
+                @"C:\WINDOWS\MSAgent\chars\Merlin.acs",
+                @"C:\WINDOWS\srchasst\chars\Merlin.acs"
+            };
 
-                bool loaded = false;
-                for (int i = 0; i < paths.Length; i++)
+            bool loaded = false;
+            for (int i = 0; i < paths.Length; i++)
+            {
+                if (System.IO.File.Exists(paths[i]))
                 {
-                    if (System.IO.File.Exists(paths[i]))
+                    try
                     {
                         _charsType.InvokeMember("Load", BindingFlags.InvokeMethod,
                             null, _characters, new object[] { "Merlin", paths[i] });
                         loaded = true;
                         break;
                     }
+                    catch (Exception ex)
+                    {
+                        _lastError = "Failed to load Merlin from " + paths[i] + ": " + ex.Message;
+                    }
                 }
+            }
 
-                if (!loaded)
+            if (!loaded)
+            {
+                if (_lastError == null)
                 {
-                    return false;
+                    _lastError = "Merlin.acs not found in any expected location.";
                 }
+                return false;
+            }
 
+            try
+            {
                 _character = _charsType.InvokeMember("Character",
                     BindingFlags.InvokeMethod, null, _characters, new object[] { "Merlin" });
                 _charType = _character.GetType();
-
-                _isAvailable = true;
-                return true;
             }
-            catch
+            catch (Exception ex)
             {
-                _isAvailable = false;
+                _lastError = "Failed to get Merlin character: " + ex.Message;
                 return false;
             }
+
+            _isAvailable = true;
+            return true;
         }
 
         public void Show()
@@ -94,7 +141,7 @@ namespace Incantation.Agent
             try
             {
                 _charType.InvokeMember("Show", BindingFlags.InvokeMethod,
-                    null, _character, new object[] { (short)0 });
+                    null, _character, new object[] { false });
                 _isVisible = true;
             }
             catch
@@ -112,7 +159,7 @@ namespace Incantation.Agent
             try
             {
                 _charType.InvokeMember("Hide", BindingFlags.InvokeMethod,
-                    null, _character, new object[] { (short)0 });
+                    null, _character, new object[] { false });
                 _isVisible = false;
             }
             catch
@@ -189,8 +236,112 @@ namespace Incantation.Agent
 
         public void AnimateGreet()
         {
+            StopAll();
             Play("Greet");
             _lastAnimation = "Greet";
+        }
+
+        public void AnimateExplain()
+        {
+            if (_lastAnimation == "Explain") return;
+            StopAll();
+            Play("Explain");
+            _lastAnimation = "Explain";
+        }
+
+        public void AnimateSuggest()
+        {
+            if (_lastAnimation == "Suggest") return;
+            StopAll();
+            Play("Suggest");
+            _lastAnimation = "Suggest";
+        }
+
+        public void AnimateProcessing()
+        {
+            if (_lastAnimation == "Processing") return;
+            StopAll();
+            Play("Processing");
+            _lastAnimation = "Processing";
+        }
+
+        public void AnimateCongratulate()
+        {
+            StopAll();
+            Play("Congratulate");
+            _lastAnimation = "Congratulate";
+        }
+
+        public void AnimateSurprised()
+        {
+            StopAll();
+            Play("Surprised");
+            _lastAnimation = "Surprised";
+        }
+
+        public void AnimateConfused()
+        {
+            if (_lastAnimation == "Confused") return;
+            StopAll();
+            Play("Confused");
+            _lastAnimation = "Confused";
+        }
+
+        public void AnimateAcknowledge()
+        {
+            StopAll();
+            Play("Acknowledge");
+            _lastAnimation = "Acknowledge";
+        }
+
+        public void AnimateWave()
+        {
+            StopAll();
+            Play("Wave");
+            _lastAnimation = "Wave";
+        }
+
+        public void AnimateDoMagic()
+        {
+            StopAll();
+            Play("DoMagic1");
+            Play("DoMagic2");
+            _lastAnimation = "DoMagic2";
+        }
+
+        public void AnimateAnnounce()
+        {
+            StopAll();
+            Play("Announce");
+            _lastAnimation = "Announce";
+        }
+
+        public void AnimateGetAttention()
+        {
+            StopAll();
+            Play("GetAttention");
+            _lastAnimation = "GetAttention";
+        }
+
+        public void AnimatePleased()
+        {
+            StopAll();
+            Play("Pleased");
+            _lastAnimation = "Pleased";
+        }
+
+        public void AnimateDecline()
+        {
+            StopAll();
+            Play("Decline");
+            _lastAnimation = "Decline";
+        }
+
+        public void AnimateLookUp()
+        {
+            StopAll();
+            Play("LookUp");
+            _lastAnimation = "LookUp";
         }
 
         public void Speak(string text)
@@ -236,7 +387,7 @@ namespace Incantation.Agent
             try
             {
                 _charType.InvokeMember("StopAll", BindingFlags.InvokeMethod,
-                    null, _character, new object[] { null });
+                    null, _character, null);
                 _lastAnimation = null;
             }
             catch
@@ -245,18 +396,20 @@ namespace Incantation.Agent
             }
         }
 
-        public void MoveNearForm(Form form)
+        public void MoveToControl(Control control)
         {
-            if (!_isAvailable || _character == null || form == null)
+            if (!_isAvailable || _character == null || control == null || !control.IsHandleCreated)
             {
                 return;
             }
             try
             {
-                // Position to the right of the form, vertically centered
-                Point screenPos = form.PointToScreen(new Point(form.ClientSize.Width, 0));
-                int x = screenPos.X + 20;
-                int y = screenPos.Y + (form.ClientSize.Height / 4);
+                // Center horizontally in the control, anchor to the bottom
+                Point screenPos = control.PointToScreen(Point.Empty);
+                int charWidth = 128;
+                int charHeight = 128;
+                int x = screenPos.X + (control.Width - charWidth) / 2;
+                int y = screenPos.Y + control.Height - charHeight;
 
                 // Clamp to short range
                 if (x > short.MaxValue) x = short.MaxValue;
@@ -265,7 +418,7 @@ namespace Incantation.Agent
                 if (y < 0) y = 0;
 
                 _charType.InvokeMember("MoveTo", BindingFlags.InvokeMethod,
-                    null, _character, new object[] { (short)x, (short)y, 1000 });
+                    null, _character, new object[] { (short)x, (short)y, 0 });
             }
             catch
             {
