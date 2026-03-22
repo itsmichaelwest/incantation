@@ -38,15 +38,12 @@ namespace Incantation
         private Panel _leftPanel;
         private Panel _hdrSessions;
         private ListBox _sessionList;
-        private Button _btnNewSession;
 
         // Center — Chat
         private ChatPanel _chatBox;
         private TextBox _inputBox;
         private Panel _inputPanel;
-        private Panel _buttonPanel;
         private Button _btnSend;
-        private Button _btnAttach;
         private ComboBox _cboWorkDir;
         private ComboBox _cboModel;
         private ListBox _attachList;
@@ -63,16 +60,21 @@ namespace Incantation
         private ListBox _contextList;
 
         // Menu and status
-        private MainMenu _mainMenu;
-        private StatusBar _statusBar;
-        private StatusBarPanel _statusConnection;
-        private StatusBarPanel _statusSession;
-        private StatusBarPanel _statusState;
+        private MenuStrip _menuStrip;
+        private StatusStrip _statusStrip;
+        private ToolStripStatusLabel _statusConnection;
+        private ToolStripStatusLabel _statusSession;
+        private ToolStripStatusLabel _statusState;
+
+        // Input border
+        private Panel _inputBorder;
 
         // Workers
         private BackgroundWorker _messageWorker;
         private BackgroundWorker _sessionWorker;
 
+        // Session list hover
+        private int _sessionHotIndex = -1;
 
         // State
         private List<string> _sessionIds;
@@ -85,6 +87,7 @@ namespace Incantation
         private SessionStore _sessionStore;
         private SessionData _currentSessionData;
         private string _assistantBuffer;
+        private string _reasoningBuffer;
 
         public MainForm()
         {
@@ -94,10 +97,12 @@ namespace Incantation
             _contextFiles = new List<string>();
             _outputFiles = new List<string>();
             _assistantBuffer = "";
+            _reasoningBuffer = "";
 
             InitializeComponents();
             _chatHistory = new ChatHistory();
             _chatRenderer = _chatBox;
+            ToolStripManager.Renderer = new ToolStripProfessionalRenderer(new SlateCopperColorTable());
             _proxyClient = new ProxyClient(_proxyAddress);
             _sessionStore = new SessionStore(Application.StartupPath);
         }
@@ -110,75 +115,70 @@ namespace Incantation
             this.Font = new Font("Tahoma", 8.25f);
 
             // ============================================================
-            // Main menu
+            // Main menu (MenuStrip)
             // ============================================================
-            _mainMenu = new MainMenu();
+            _menuStrip = new MenuStrip();
 
-            MenuItem fileMenu = new MenuItem("File");
-            fileMenu.MenuItems.Add(new MenuItem("New Session", new EventHandler(this.OnNewSession)));
-            fileMenu.MenuItems.Add(new MenuItem("Attach File...", new EventHandler(this.OnAttachClick)));
-            fileMenu.MenuItems.Add(new MenuItem("-"));
-            fileMenu.MenuItems.Add(new MenuItem("Exit", new EventHandler(this.OnExit)));
+            ToolStripMenuItem fileMenu = new ToolStripMenuItem("File");
+            fileMenu.DropDownItems.Add(new ToolStripMenuItem("New Session", null, new EventHandler(this.OnNewSession)));
+            fileMenu.DropDownItems.Add(new ToolStripMenuItem("Attach File...", null, new EventHandler(this.OnAttachClick)));
+            fileMenu.DropDownItems.Add(new ToolStripSeparator());
+            fileMenu.DropDownItems.Add(new ToolStripMenuItem("Exit", null, new EventHandler(this.OnExit)));
 
-            MenuItem editMenu = new MenuItem("Edit");
-            editMenu.MenuItems.Add(new MenuItem("Copy", new EventHandler(this.OnCopy)));
-            editMenu.MenuItems.Add(new MenuItem("Clear History", new EventHandler(this.OnClearHistory)));
+            ToolStripMenuItem editMenu = new ToolStripMenuItem("Edit");
+            editMenu.DropDownItems.Add(new ToolStripMenuItem("Copy", null, new EventHandler(this.OnCopy)));
+            editMenu.DropDownItems.Add(new ToolStripMenuItem("Clear History", null, new EventHandler(this.OnClearHistory)));
 
-            MenuItem viewMenu = new MenuItem("View");
-            viewMenu.MenuItems.Add(new MenuItem("Sessions Panel", new EventHandler(this.OnToggleSessionsPanel)));
-            viewMenu.MenuItems.Add(new MenuItem("Details Panel", new EventHandler(this.OnToggleDetailsPanel)));
+            ToolStripMenuItem viewMenu = new ToolStripMenuItem("View");
+            viewMenu.DropDownItems.Add(new ToolStripMenuItem("Sessions Panel", null, new EventHandler(this.OnToggleSessionsPanel)));
+            viewMenu.DropDownItems.Add(new ToolStripMenuItem("Details Panel", null, new EventHandler(this.OnToggleDetailsPanel)));
 
-            MenuItem toolsMenu = new MenuItem("Tools");
-            toolsMenu.MenuItems.Add(new MenuItem("Settings", new EventHandler(this.OnSettings)));
-            toolsMenu.MenuItems.Add(new MenuItem("-"));
-            toolsMenu.MenuItems.Add(new MenuItem("Merlin On/Off", new EventHandler(this.OnToggleMerlin)));
+            ToolStripMenuItem toolsMenu = new ToolStripMenuItem("Tools");
+            toolsMenu.DropDownItems.Add(new ToolStripMenuItem("Settings", null, new EventHandler(this.OnSettings)));
+            toolsMenu.DropDownItems.Add(new ToolStripSeparator());
+            toolsMenu.DropDownItems.Add(new ToolStripMenuItem("Merlin On/Off", null, new EventHandler(this.OnToggleMerlin)));
 
-            MenuItem helpMenu = new MenuItem("Help");
-            helpMenu.MenuItems.Add(new MenuItem("About", new EventHandler(this.OnAbout)));
+            ToolStripMenuItem helpMenu = new ToolStripMenuItem("Help");
+            helpMenu.DropDownItems.Add(new ToolStripMenuItem("About", null, new EventHandler(this.OnAbout)));
 
-            _mainMenu.MenuItems.Add(fileMenu);
-            _mainMenu.MenuItems.Add(editMenu);
-            _mainMenu.MenuItems.Add(viewMenu);
-            _mainMenu.MenuItems.Add(toolsMenu);
-            _mainMenu.MenuItems.Add(helpMenu);
-            this.Menu = _mainMenu;
+            _menuStrip.Items.Add(fileMenu);
+            _menuStrip.Items.Add(editMenu);
+            _menuStrip.Items.Add(viewMenu);
+            _menuStrip.Items.Add(toolsMenu);
+            _menuStrip.Items.Add(helpMenu);
+            this.MainMenuStrip = _menuStrip;
 
             // ============================================================
             // ToolStrip
             // ============================================================
             _toolStrip = new ToolStrip();
-            _toolStrip.RenderMode = ToolStripRenderMode.System;
             _toolStrip.GripStyle = ToolStripGripStyle.Hidden;
             _toolStrip.Items.Add(new ToolStripButton("New Session", null, new EventHandler(this.OnNewSession)));
-            _toolStrip.Items.Add(new ToolStripSeparator());
-            _toolStrip.Items.Add(new ToolStripButton("Send", null, new EventHandler(this.OnSendClick)));
-            _toolStrip.Items.Add(new ToolStripButton("Attach File", null, new EventHandler(this.OnAttachClick)));
             _toolStrip.Items.Add(new ToolStripSeparator());
             _toolStrip.Items.Add(new ToolStripButton("Settings", null, new EventHandler(this.OnSettings)));
 
             // ============================================================
-            // Status bar
+            // Status bar (StatusStrip)
             // ============================================================
-            _statusBar = new StatusBar();
-            _statusBar.ShowPanels = true;
+            _statusStrip = new StatusStrip();
 
-            _statusConnection = new StatusBarPanel();
+            _statusConnection = new ToolStripStatusLabel();
             _statusConnection.Text = "Disconnected";
             _statusConnection.Width = 150;
-            _statusConnection.AutoSize = StatusBarPanelAutoSize.None;
+            _statusConnection.AutoSize = false;
 
-            _statusSession = new StatusBarPanel();
+            _statusSession = new ToolStripStatusLabel();
             _statusSession.Text = "No Session";
             _statusSession.Width = 250;
-            _statusSession.AutoSize = StatusBarPanelAutoSize.None;
+            _statusSession.AutoSize = false;
 
-            _statusState = new StatusBarPanel();
+            _statusState = new ToolStripStatusLabel();
             _statusState.Text = "Ready";
-            _statusState.AutoSize = StatusBarPanelAutoSize.Spring;
+            _statusState.Spring = true;
 
-            _statusBar.Panels.Add(_statusConnection);
-            _statusBar.Panels.Add(_statusSession);
-            _statusBar.Panels.Add(_statusState);
+            _statusStrip.Items.Add(_statusConnection);
+            _statusStrip.Items.Add(_statusSession);
+            _statusStrip.Items.Add(_statusState);
 
             // ============================================================
             // Left sidebar — Sessions
@@ -202,6 +202,8 @@ namespace Incantation
             _sessionList.SelectedIndexChanged += new EventHandler(this.OnSessionListSelected);
             _sessionList.DrawItem += new DrawItemEventHandler(this.OnDrawSessionItem);
             _sessionList.MouseDown += new MouseEventHandler(this.OnSessionListMouseDown);
+            _sessionList.MouseMove += new MouseEventHandler(this.OnSessionListMouseMove);
+            _sessionList.MouseLeave += new EventHandler(this.OnSessionListMouseLeave);
 
             ContextMenu sessionCtx = new ContextMenu();
             sessionCtx.MenuItems.Add(new MenuItem("Rename...", new EventHandler(this.OnRenameSession)));
@@ -209,17 +211,9 @@ namespace Incantation
             sessionCtx.MenuItems.Add(new MenuItem("Delete", new EventHandler(this.OnDeleteSession)));
             _sessionList.ContextMenu = sessionCtx;
 
-            _btnNewSession = new Button();
-            _btnNewSession.Text = "New Session";
-            _btnNewSession.Dock = DockStyle.Bottom;
-            _btnNewSession.Height = 28;
-            _btnNewSession.FlatStyle = FlatStyle.System;
-            _btnNewSession.Click += new EventHandler(this.OnNewSession);
-
             // Fill first (docks last), then edge controls (dock first)
             _leftPanel.Controls.Add(_sessionList);     // Fill — index 0, docks last
-            _leftPanel.Controls.Add(_btnNewSession);   // Bottom — index 1
-            _leftPanel.Controls.Add(_hdrSessions);     // Top — index 2, docks first
+            _leftPanel.Controls.Add(_hdrSessions);     // Top — index 1, docks first
 
             // ============================================================
             // Right sidebar — Tasks / Output / Context (stacked)
@@ -261,7 +255,10 @@ namespace Incantation
             _outputList = new ListBox();
             _outputList.Dock = DockStyle.Fill;
             _outputList.IntegralHeight = false;
+            _outputList.DrawMode = DrawMode.OwnerDrawFixed;
+            _outputList.ItemHeight = 20;
             _outputList.DoubleClick += new EventHandler(this.OnOutputDoubleClick);
+            _outputList.DrawItem += new DrawItemEventHandler(this.OnDrawOutputItem);
             _outputList.BackColor = GradientHeader.SidebarBg;
             _outputList.BorderStyle = BorderStyle.None;
 
@@ -322,71 +319,102 @@ namespace Incantation
             _inputPanel = new Panel();
             _inputPanel.Dock = DockStyle.Fill;
 
-            _buttonPanel = new Panel();
-            _buttonPanel.Dock = DockStyle.Bottom;
-            _buttonPanel.Height = 36;
+            // --- Input toolbar strip (working dir, model, attach) ---
+            ToolStrip _inputToolbar = new ToolStrip();
+            _inputToolbar.GripStyle = ToolStripGripStyle.Hidden;
+            _inputToolbar.Dock = DockStyle.Top;
 
-            _btnSend = new Button();
-            _btnSend.Text = "Send";
-            _btnSend.Dock = DockStyle.Right;
-            _btnSend.Width = 75;
-            _btnSend.Click += new EventHandler(this.OnSendClick);
-
-            _btnAttach = new Button();
-            _btnAttach.Text = "Attach File...";
-            _btnAttach.Dock = DockStyle.Right;
-            _btnAttach.Width = 100;
-            _btnAttach.Click += new EventHandler(this.OnAttachClick);
-
-            _cboModel = new ComboBox();
-            _cboModel.Dock = DockStyle.Right;
-            _cboModel.Width = 160;
-            _cboModel.DropDownStyle = ComboBoxStyle.DropDownList;
-            _cboModel.Font = new Font("Tahoma", 7.5f);
-            _cboModel.Items.Add("(default)");
-            _cboModel.SelectedIndex = 0;
+            ToolStripLabel lblDir = new ToolStripLabel("Dir:");
+            _inputToolbar.Items.Add(lblDir);
 
             _cboWorkDir = new ComboBox();
-            _cboWorkDir.Dock = DockStyle.Fill;
             _cboWorkDir.DropDownStyle = ComboBoxStyle.DropDown;
             _cboWorkDir.Font = new Font("Tahoma", 7.5f);
+            _cboWorkDir.Width = 200;
+            _cboWorkDir.FlatStyle = FlatStyle.Flat;
             _cboWorkDir.Items.Add(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
             _cboWorkDir.Items.Add(@"C:\Projects");
             _cboWorkDir.Items.Add(@"C:\");
             _cboWorkDir.SelectedIndex = 0;
+            ToolStripControlHost workDirHost = new ToolStripControlHost(_cboWorkDir);
+            _inputToolbar.Items.Add(workDirHost);
 
-            // Dock order: Fill first (docks last), then Right controls
-            _buttonPanel.Controls.Add(_cboWorkDir);
-            _buttonPanel.Controls.Add(_cboModel);
-            _buttonPanel.Controls.Add(_btnAttach);
-            _buttonPanel.Controls.Add(_btnSend);
+            _inputToolbar.Items.Add(new ToolStripSeparator());
 
-            // Attachment display list (between input and buttons)
+            ToolStripLabel lblModel = new ToolStripLabel("Model:");
+            _inputToolbar.Items.Add(lblModel);
+
+            _cboModel = new ComboBox();
+            _cboModel.DropDownStyle = ComboBoxStyle.DropDownList;
+            _cboModel.Font = new Font("Tahoma", 7.5f);
+            _cboModel.Width = 150;
+            _cboModel.FlatStyle = FlatStyle.Flat;
+            _cboModel.Items.Add("(default)");
+            _cboModel.SelectedIndex = 0;
+            ToolStripControlHost modelHost = new ToolStripControlHost(_cboModel);
+            _inputToolbar.Items.Add(modelHost);
+
+            _inputToolbar.Items.Add(new ToolStripSeparator());
+
+            ToolStripButton tsbAttach = new ToolStripButton("Attach File...");
+            tsbAttach.Click += new EventHandler(this.OnAttachClick);
+            _inputToolbar.Items.Add(tsbAttach);
+
+            // --- Attachment display list ---
             _attachList = new ListBox();
             _attachList.Dock = DockStyle.Bottom;
             _attachList.Height = 0;
             _attachList.Visible = false;
             _attachList.IntegralHeight = false;
             _attachList.Font = new Font("Tahoma", 7.5f);
+            _attachList.DrawMode = DrawMode.OwnerDrawFixed;
+            _attachList.ItemHeight = 20;
+            _attachList.DrawItem += new DrawItemEventHandler(this.OnDrawAttachItem);
 
             ContextMenu attachCtx = new ContextMenu();
             attachCtx.MenuItems.Add(new MenuItem("Remove", new EventHandler(this.OnRemoveAttachment)));
             _attachList.ContextMenu = attachCtx;
 
+            // --- Send button (right side of input) ---
+            _btnSend = new Button();
+            _btnSend.Text = "Send";
+            _btnSend.Dock = DockStyle.Right;
+            _btnSend.Width = 60;
+            _btnSend.FlatStyle = FlatStyle.Flat;
+            _btnSend.FlatAppearance.BorderColor = Color.FromArgb(148, 170, 186);
+            _btnSend.FlatAppearance.MouseOverBackColor = Color.FromArgb(232, 168, 124);
+            _btnSend.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 96, 48);
+            _btnSend.BackColor = Color.FromArgb(220, 228, 234);
+            _btnSend.ForeColor = Color.FromArgb(40, 50, 60);
+            _btnSend.Font = new Font("Tahoma", 8.25f, FontStyle.Bold);
+            _btnSend.Click += new EventHandler(this.OnSendClick);
+
+            // --- Input textbox with border ---
             _inputBox = new TextBox();
             _inputBox.Multiline = true;
             _inputBox.Dock = DockStyle.Fill;
             _inputBox.AcceptsTab = true;
             _inputBox.ScrollBars = ScrollBars.Vertical;
             _inputBox.Font = new Font("Tahoma", 8.25f);
+            _inputBox.BorderStyle = BorderStyle.None;
             _inputBox.KeyDown += new KeyEventHandler(this.OnInputKeyDown);
 
-            // Dock order: last added = docked first in WinForms.
-            // Fill must be first (index 0) so it docks last.
-            // Bottom controls added after so they dock before Fill.
-            _inputPanel.Controls.Add(_inputBox);       // Fill — index 0, docks last
-            _inputPanel.Controls.Add(_attachList);     // Bottom — index 1
-            _inputPanel.Controls.Add(_buttonPanel);    // Bottom — index 2, docks first (true bottom)
+            _inputBorder = new Panel();
+            _inputBorder.Dock = DockStyle.Fill;
+            _inputBorder.Padding = new Padding(2);
+            _inputBorder.BackColor = Color.FromArgb(148, 170, 186);
+            _inputBorder.Controls.Add(_inputBox);
+
+            // --- Input area with send button beside textbox ---
+            Panel _inputRow = new Panel();
+            _inputRow.Dock = DockStyle.Fill;
+            _inputRow.Controls.Add(_inputBorder);      // Fill — textbox area
+            _inputRow.Controls.Add(_btnSend);           // Right — send button
+
+            // Assemble: toolbar on top, attachments, then input+send
+            _inputPanel.Controls.Add(_inputRow);        // Fill — docks last
+            _inputPanel.Controls.Add(_attachList);      // Bottom
+            _inputPanel.Controls.Add(_inputToolbar);    // Top — docks first
 
             // ============================================================
             // Assemble layout
@@ -421,8 +449,9 @@ namespace Incantation
             // Last added = docked first. Fill must be added FIRST so it
             // docks LAST (takes remaining space after edge controls).
             this.Controls.Add(_outerSplit);   // Fill — index 0, docks last
-            this.Controls.Add(_statusBar);    // Bottom — already added above, move here
-            this.Controls.Add(_toolStrip);    // Top — already added above, move here
+            this.Controls.Add(_statusStrip);  // Bottom — docks before Fill
+            this.Controls.Add(_toolStrip);    // Top — docks before Fill
+            this.Controls.Add(_menuStrip);    // Top — above toolbar (docked first)
 
             // ============================================================
             // Background workers
@@ -491,8 +520,9 @@ namespace Incantation
 
             bool selected = (e.State & DrawItemState.Selected) != 0;
             bool active = sid == _sessionId;
+            bool hover = (e.Index == _sessionHotIndex && !active);
 
-            GradientHeader.PaintSessionItem(e.Graphics, e.Bounds, title, timeText, selected, active);
+            GradientHeader.PaintSessionItem(e.Graphics, e.Bounds, title, timeText, selected || hover, active);
         }
 
         // ====================================================================
@@ -543,10 +573,14 @@ namespace Incantation
 
         private void LoadPersistedSessions()
         {
+            // Suppress SelectedIndexChanged during rebuild to prevent side effects
+            _sessionList.SelectedIndexChanged -= new EventHandler(this.OnSessionListSelected);
+
             List<SessionData> saved = _sessionStore.ListAll();
             _sessionList.Items.Clear();
             _sessionIds.Clear();
 
+            int selectIdx = -1;
             for (int i = 0; i < saved.Count; i++)
             {
                 SessionData sd = saved[i];
@@ -554,7 +588,20 @@ namespace Incantation
                 _sessionTitles[sd.SessionId] = sd.DisplayTitle;
                 string display = string.Format("{0}  ({1})", sd.DisplayTitle, sd.DisplayTime);
                 _sessionList.Items.Add(display);
+
+                if (sd.SessionId == _sessionId)
+                {
+                    selectIdx = i;
+                }
             }
+
+            // Re-select the active session
+            if (selectIdx >= 0)
+            {
+                _sessionList.SelectedIndex = selectIdx;
+            }
+
+            _sessionList.SelectedIndexChanged += new EventHandler(this.OnSessionListSelected);
         }
 
         private void OnSessionListMouseDown(object sender, MouseEventArgs e)
@@ -567,6 +614,25 @@ namespace Incantation
                 {
                     _sessionList.SelectedIndex = idx;
                 }
+            }
+        }
+
+        private void OnSessionListMouseMove(object sender, MouseEventArgs e)
+        {
+            int idx = _sessionList.IndexFromPoint(e.Location);
+            if (idx != _sessionHotIndex)
+            {
+                _sessionHotIndex = idx;
+                _sessionList.Invalidate();
+            }
+        }
+
+        private void OnSessionListMouseLeave(object sender, EventArgs e)
+        {
+            if (_sessionHotIndex >= 0)
+            {
+                _sessionHotIndex = -1;
+                _sessionList.Invalidate();
             }
         }
 
@@ -863,12 +929,33 @@ namespace Incantation
                 {
                     if (msg.Type == "reasoning")
                     {
+                        // Peek ahead: if next message is assistant text, create header first
+                        if (_assistantBuffer.Length == 0)
+                        {
+                            // Find the timestamp from the next assistant text message
+                            DateTime reasoningTime = msg.Timestamp;
+                            for (int j = i + 1; j < msgs.Count; j++)
+                            {
+                                if (msgs[j].Role == "assistant" && msgs[j].Type != "reasoning")
+                                {
+                                    reasoningTime = msgs[j].Timestamp;
+                                    break;
+                                }
+                            }
+                            _chatRenderer.AppendAssistantHeader("Assistant", reasoningTime);
+                            _assistantBuffer = " "; // mark that header was created
+                        }
                         _chatRenderer.AppendReasoning(msg.Content);
                         _chatRenderer.EndReasoning();
                     }
                     else
                     {
-                        _chatRenderer.AppendAssistantHeader("Assistant", msg.Timestamp);
+                        // Only create header if not already created by reasoning
+                        if (_assistantBuffer.Length == 0)
+                        {
+                            _chatRenderer.AppendAssistantHeader("Assistant", msg.Timestamp);
+                        }
+                        _assistantBuffer = "";
                         _chatRenderer.AppendDelta(msg.Content);
                         _chatRenderer.FinalizeMessage();
                     }
@@ -969,6 +1056,19 @@ namespace Incantation
 
             _inputBox.Text = "";
 
+            // Capture attached files before clearing
+            List<string> attachedFiles = new List<string>();
+            if (_contextFiles.Count > 0)
+            {
+                for (int i = 0; i < _contextFiles.Count; i++)
+                {
+                    attachedFiles.Add(_contextFiles[i]);
+                }
+                _contextFiles.Clear();
+                _attachList.Items.Clear();
+                UpdateAttachListVisibility();
+            }
+
             // Create persisted session on first message (deferred from OnSessionCompleted)
             if (_currentSessionData == null && _sessionId != null)
             {
@@ -1007,7 +1107,12 @@ namespace Incantation
                 _currentSessionData.AddMessage(userMsg);
             }
             _assistantBuffer = "";
+            _reasoningBuffer = "";
             _chatRenderer.AppendUserMessage("You", now, text);
+            for (int i = 0; i < attachedFiles.Count; i++)
+            {
+                _chatRenderer.AppendFileArtifact(attachedFiles[i]);
+            }
             _chatRenderer.AppendAssistantHeader("Assistant", now);
             _chatRenderer.ScrollToEnd();
 
@@ -1090,13 +1195,22 @@ namespace Incantation
                     JToken contentToken = obj.SelectToken("content");
                     if (contentToken != null)
                     {
-                        _chatRenderer.AppendReasoning((string)contentToken);
+                        string reasoningText = (string)contentToken;
+                        _reasoningBuffer += reasoningText;
+                        _chatRenderer.AppendReasoning(reasoningText);
                         _chatRenderer.ScrollToEnd();
                         _statusState.Text = "Thinking...";
                     }
                 }
                 else if (eventType == "delta")
                 {
+                    // Save accumulated reasoning before first content delta
+                    if (_reasoningBuffer.Length > 0 && _currentSessionData != null)
+                    {
+                        _currentSessionData.AddMessage(new ChatMessage("assistant", _reasoningBuffer, "reasoning"));
+                        _reasoningBuffer = "";
+                    }
+
                     JToken contentToken = obj.SelectToken("content");
                     if (contentToken != null)
                     {
@@ -1149,6 +1263,16 @@ namespace Incantation
                     if (filePath != null)
                     {
                         AddOutputItem(filePath);
+                    }
+
+                    // Show file artifact in chat for file-creating tools
+                    if (toolName == "write" || toolName == "Write"
+                        || toolName == "xp_write_file" || toolName == "Edit" || toolName == "edit")
+                    {
+                        if (filePath != null)
+                        {
+                            _chatRenderer.AppendFileArtifact(filePath);
+                        }
                     }
 
                     if (_merlin != null && _merlin.IsAvailable && _merlinEnabled)
@@ -1219,6 +1343,12 @@ namespace Incantation
                             _tasksList.SetItemChecked(lastIdx, true);
                             MarkLastIntentCompleted();
                         }
+                    }
+                    // Save any remaining reasoning
+                    if (_currentSessionData != null && _reasoningBuffer.Length > 0)
+                    {
+                        _currentSessionData.AddMessage(new ChatMessage("assistant", _reasoningBuffer, "reasoning"));
+                        _reasoningBuffer = "";
                     }
                     // Save assistant response to session
                     if (_currentSessionData != null && _assistantBuffer.Length > 0)
@@ -1473,11 +1603,43 @@ namespace Incantation
             }
         }
 
+        private void OnDrawAttachItem(object sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0 || e.Index >= _contextFiles.Count) return;
+
+            e.DrawBackground();
+
+            string filePath = _contextFiles[e.Index];
+            string fileName = System.IO.Path.GetFileName(filePath);
+
+            try
+            {
+                Icon fileIcon = null;
+                if (System.IO.File.Exists(filePath))
+                {
+                    fileIcon = System.Drawing.Icon.ExtractAssociatedIcon(filePath);
+                }
+                if (fileIcon != null)
+                {
+                    e.Graphics.DrawIcon(fileIcon, new Rectangle(e.Bounds.X + 2, e.Bounds.Y + 2, 16, 16));
+                    fileIcon.Dispose();
+                }
+            }
+            catch { }
+
+            using (SolidBrush brush = new SolidBrush(e.ForeColor))
+            {
+                e.Graphics.DrawString(fileName, e.Font, brush, e.Bounds.X + 22, e.Bounds.Y + 3);
+            }
+
+            e.DrawFocusRectangle();
+        }
+
         private void UpdateAttachListVisibility()
         {
             if (_contextFiles.Count > 0)
             {
-                _attachList.Height = System.Math.Min(_contextFiles.Count * 16 + 4, 60);
+                _attachList.Height = System.Math.Min(_contextFiles.Count * 20 + 4, 64);
                 _attachList.Visible = true;
             }
             else
@@ -1493,19 +1655,63 @@ namespace Incantation
             if (idx < 0 || idx >= _outputFiles.Count) return;
 
             string item = _outputFiles[idx];
-            // Show content in a new window
-            Form viewer = new Form();
-            viewer.Text = "Output: " + item;
-            viewer.Size = new Size(600, 400);
-            viewer.StartPosition = FormStartPosition.CenterParent;
+            try
+            {
+                if (System.IO.File.Exists(item))
+                {
+                    System.Diagnostics.Process.Start(item);
+                }
+                else
+                {
+                    // Fallback: show in text viewer
+                    Form viewer = new Form();
+                    viewer.Text = "Output: " + item;
+                    viewer.Size = new Size(600, 400);
+                    viewer.StartPosition = FormStartPosition.CenterParent;
+                    RichTextBox rtb = new RichTextBox();
+                    rtb.Dock = DockStyle.Fill;
+                    rtb.ReadOnly = true;
+                    rtb.Font = new Font("Lucida Console", 9f);
+                    rtb.Text = item;
+                    viewer.Controls.Add(rtb);
+                    viewer.Show(this);
+                }
+            }
+            catch { }
+        }
 
-            RichTextBox rtb = new RichTextBox();
-            rtb.Dock = DockStyle.Fill;
-            rtb.ReadOnly = true;
-            rtb.Font = new Font("Lucida Console", 9f);
-            rtb.Text = item;
-            viewer.Controls.Add(rtb);
-            viewer.Show(this);
+        private void OnDrawOutputItem(object sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0 || e.Index >= _outputFiles.Count) return;
+
+            e.DrawBackground();
+
+            string filePath = _outputFiles[e.Index];
+            string fileName = System.IO.Path.GetFileName(filePath);
+
+            // Draw file icon
+            try
+            {
+                Icon fileIcon = null;
+                if (System.IO.File.Exists(filePath))
+                {
+                    fileIcon = System.Drawing.Icon.ExtractAssociatedIcon(filePath);
+                }
+                if (fileIcon != null)
+                {
+                    e.Graphics.DrawIcon(fileIcon, new Rectangle(e.Bounds.X + 2, e.Bounds.Y + 2, 16, 16));
+                    fileIcon.Dispose();
+                }
+            }
+            catch { }
+
+            // Draw filename
+            using (SolidBrush brush = new SolidBrush(e.ForeColor))
+            {
+                e.Graphics.DrawString(fileName, e.Font, brush, e.Bounds.X + 22, e.Bounds.Y + 3);
+            }
+
+            e.DrawFocusRectangle();
         }
 
         private void OnNewSession(object sender, EventArgs e)
@@ -1515,6 +1721,11 @@ namespace Incantation
             _sessionId = null;
             _proxySessionId = null;
             _pendingMessage = null;
+            _currentSessionData = null;
+            _sessionList.SelectedIndexChanged -= new EventHandler(this.OnSessionListSelected);
+            _sessionList.SelectedIndex = -1;
+            _sessionList.SelectedIndexChanged += new EventHandler(this.OnSessionListSelected);
+            _sessionList.Invalidate();
             _chatRenderer.Clear();
             _chatHistory.Clear();
             _tasksList.Items.Clear();

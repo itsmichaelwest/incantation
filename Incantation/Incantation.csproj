@@ -50,6 +50,7 @@
     <Compile Include="Agent\MerlinHelper.cs" />
     <Compile Include="UI\GradientHeader.cs" />
     <Compile Include="UI\ChatPanel.cs" />
+    <Compile Include="UI\Office2003Renderer.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\Incantation.ToolServer\bin\Debug\Incantation.ToolServer.exe">

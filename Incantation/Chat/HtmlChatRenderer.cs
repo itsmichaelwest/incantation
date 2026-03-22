@@ -253,6 +253,8 @@ namespace Incantation.Chat
             AppendHtmlToChat(html);
         }
 
+        public void AppendFileArtifact(string filePath) { }
+
         public void AppendNewline()
         {
             // Small spacer between message groups

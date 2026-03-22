@@ -14,6 +14,7 @@ namespace Incantation.Chat
         void AppendToolCall(string summary);
         void AppendError(string message);
         void AppendSystemMessage(string text);
+        void AppendFileArtifact(string filePath);
         void AppendNewline();
         void FinalizeMessage();
         void Clear();

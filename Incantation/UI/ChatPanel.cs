@@ -50,6 +50,7 @@ namespace Incantation.UI
         public bool Collapsed;
         public bool Collapsible;
         public int SummaryLineCount; // lines visible when collapsed
+        public string FilePath; // set for file artifact blocks
 
         public ChatBlock(string role, Color accent, Color bg)
         {
@@ -62,6 +63,7 @@ namespace Incantation.UI
             Collapsed = false;
             Collapsible = false;
             SummaryLineCount = 0;
+            FilePath = null;
         }
 
         public void InvalidateCache()
@@ -84,32 +86,32 @@ namespace Incantation.UI
         // ================================================================
         // Colors
         // ================================================================
-        private static readonly Color BgUser = Color.FromArgb(238, 243, 251);
-        private static readonly Color BgAssistant = Color.FromArgb(247, 250, 247);
-        private static readonly Color BgTool = Color.FromArgb(253, 248, 240);
-        private static readonly Color BgError = Color.FromArgb(255, 240, 240);
-        private static readonly Color BgReasoning = Color.FromArgb(250, 250, 250);
-        private static readonly Color BgCode = Color.FromArgb(230, 232, 235);
+        private static readonly Color BgUser = Color.FromArgb(235, 240, 244);
+        private static readonly Color BgAssistant = Color.FromArgb(237, 245, 241);
+        private static readonly Color BgTool = Color.FromArgb(245, 237, 230);
+        private static readonly Color BgError = Color.FromArgb(252, 238, 237);
+        private static readonly Color BgReasoning = Color.FromArgb(242, 242, 244);
+        private static readonly Color BgCode = Color.FromArgb(228, 232, 236);
 
-        private static readonly Color AccentUser = Color.FromArgb(0, 51, 153);
-        private static readonly Color AccentAssistant = Color.FromArgb(0, 100, 0);
-        private static readonly Color AccentTool = Color.FromArgb(200, 100, 0);
-        private static readonly Color AccentError = Color.FromArgb(204, 0, 0);
-        private static readonly Color AccentReasoning = Color.FromArgb(208, 208, 208);
+        private static readonly Color AccentUser = Color.FromArgb(61, 79, 95);
+        private static readonly Color AccentAssistant = Color.FromArgb(46, 125, 89);
+        private static readonly Color AccentTool = Color.FromArgb(181, 100, 58);
+        private static readonly Color AccentError = Color.FromArgb(184, 48, 48);
+        private static readonly Color AccentReasoning = Color.FromArgb(180, 190, 198);
 
-        private static readonly Color ColorUserName = Color.FromArgb(0, 51, 153);
-        private static readonly Color ColorAssistantName = Color.FromArgb(0, 100, 0);
+        private static readonly Color ColorUserName = Color.FromArgb(61, 79, 95);
+        private static readonly Color ColorAssistantName = Color.FromArgb(46, 125, 89);
         private static readonly Color ColorTimestamp = Color.Gray;
         private static readonly Color ColorContent = Color.Black;
-        private static readonly Color ColorToolSummary = Color.FromArgb(200, 100, 0);
+        private static readonly Color ColorToolSummary = Color.FromArgb(181, 100, 58);
         private static readonly Color ColorSystem = Color.Gray;
-        private static readonly Color ColorErrorText = Color.FromArgb(204, 0, 0);
-        private static readonly Color ColorReasoning = Color.FromArgb(140, 140, 140);
-        private static readonly Color ColorBullet = Color.FromArgb(100, 100, 100);
-        private static readonly Color ColorHeader = Color.FromArgb(0, 51, 153);
-        private static readonly Color ColorBlockquote = Color.FromArgb(100, 100, 100);
-        private static readonly Color ColorLink = Color.FromArgb(0, 0, 200);
-        private static readonly Color ColorCodeBorder = Color.FromArgb(224, 224, 224);
+        private static readonly Color ColorErrorText = Color.FromArgb(184, 48, 48);
+        private static readonly Color ColorReasoning = Color.FromArgb(130, 140, 148);
+        private static readonly Color ColorBullet = Color.FromArgb(90, 100, 110);
+        private static readonly Color ColorHeader = Color.FromArgb(61, 79, 95);
+        private static readonly Color ColorBlockquote = Color.FromArgb(90, 100, 110);
+        private static readonly Color ColorLink = Color.FromArgb(46, 125, 89);
+        private static readonly Color ColorCodeBorder = Color.FromArgb(200, 208, 214);
 
         // ================================================================
         // Fonts
@@ -273,34 +275,61 @@ namespace Incantation.UI
         {
             if (text == null) return;
 
+            // Add reasoning lines directly to the assistant block so they
+            // appear between the header and the content (above the response).
+            ChatBlock target = _assistantBlock;
+            if (target == null) return;
+
             if (!_inReasoning)
             {
                 _inReasoning = true;
-                ChatBlock block = new ChatBlock("reasoning", AccentReasoning, BgReasoning);
                 DisplayLine dl = new DisplayLine();
                 dl.Spans.Add(new TextSpan("thinking: ", _fontItalic, ColorReasoning));
-                block.Lines.Add(dl);
-                _currentBlock = block;
-                AddBlock(block);
+                target.Lines.Add(dl);
             }
 
-            // Append to last line of reasoning block
-            if (_currentBlock != null && _currentBlock.Lines.Count > 0)
+            // Append to last reasoning line, splitting on newlines
+            string cleaned = StripEmoji(text);
+            string[] parts = cleaned.Split('\n');
+
+            for (int p = 0; p < parts.Length; p++)
             {
-                DisplayLine last = _currentBlock.Lines[_currentBlock.Lines.Count - 1];
-                last.Spans.Add(new TextSpan(StripEmoji(text), _fontItalic, ColorReasoning));
-                _currentBlock.InvalidateCache();
-                Invalidate();
+                if (p > 0)
+                {
+                    DisplayLine newLine = new DisplayLine();
+                    newLine.Spans.Add(new TextSpan(parts[p], _fontItalic, ColorReasoning));
+                    target.Lines.Add(newLine);
+                }
+                else
+                {
+                    DisplayLine last = target.Lines[target.Lines.Count - 1];
+                    if (last.Spans.Count > 0)
+                    {
+                        TextSpan lastSpan = last.Spans[last.Spans.Count - 1];
+                        lastSpan.Text += parts[p];
+                    }
+                    else
+                    {
+                        last.Spans.Add(new TextSpan(parts[p], _fontItalic, ColorReasoning));
+                    }
+                }
             }
+
+            target.InvalidateCache();
+            Invalidate();
         }
 
         public void EndReasoning()
         {
-            if (_inReasoning)
+            if (_inReasoning && _assistantBlock != null)
             {
-                _inReasoning = false;
-                _currentBlock = _assistantBlock;
+                // Add a spacer line between thinking and response
+                DisplayLine spacer = new DisplayLine();
+                spacer.Spans.Add(new TextSpan("", _fontNormal, ColorContent));
+                _assistantBlock.Lines.Add(spacer);
+                _assistantBlock.InvalidateCache();
             }
+            _inReasoning = false;
         }
 
         public void AppendDelta(string text)
@@ -314,12 +343,24 @@ namespace Incantation.UI
                 EndReasoning();
             }
 
+            // Restore assistant block if FinalizeMessage was called prematurely
+            // (e.g. a "message" event between reasoning and content)
+            if (_currentBlock == null && _assistantBlock != null)
+            {
+                _currentBlock = _assistantBlock;
+            }
+
             _lineBuffer.Append(text);
             ProcessLineBuffer();
         }
 
         public void AppendToolCall(string summary, string detail)
         {
+            // Flush any pending content so it appears BEFORE the tool call
+            FlushLineBuffer();
+            if (_inTable) { FlushTable(); _inTable = false; }
+            if (_currentBlock != null) _currentBlock.InvalidateCache();
+
             ChatBlock block = new ChatBlock("tool", AccentTool, BgTool);
 
             bool hasDetail = detail != null && detail.Length > 0 && detail.Length < 500;
@@ -353,6 +394,15 @@ namespace Incantation.UI
             }
 
             AddBlock(block);
+
+            // Create a continuation block for content after the tool call
+            if (_assistantBlock != null)
+            {
+                ChatBlock cont = new ChatBlock("assistant", AccentAssistant, BgAssistant);
+                _currentBlock = cont;
+                _assistantBlock = cont;
+                AddBlock(cont);
+            }
         }
 
         public void AppendToolCall(string summary)
@@ -379,6 +429,20 @@ namespace Incantation.UI
             AddBlock(block);
         }
 
+        public void AppendFileArtifact(string filePath)
+        {
+            ChatBlock block = new ChatBlock("file", AccentTool, Color.FromArgb(250, 248, 245));
+            block.FilePath = filePath;
+
+            string fileName = System.IO.Path.GetFileName(filePath);
+            DisplayLine dl = new DisplayLine();
+            dl.LeftPadding = 20; // leave room for icon
+            dl.Spans.Add(new TextSpan(fileName, _fontBold, ColorLink));
+            block.Lines.Add(dl);
+
+            AddBlock(block);
+        }
+
         public void AppendNewline()
         {
             // Spacing handled by block margins
@@ -398,7 +462,9 @@ namespace Incantation.UI
             _inReasoning = false;
             _skippingLangHint = false;
             _currentBlock = null;
-            _assistantBlock = null;
+            // Don't null _assistantBlock here — AppendDelta may still need it
+            // if a "message" event fires between reasoning and content.
+            // It's cleared by AppendAssistantHeader and Clear() instead.
 
             if (_autoScroll)
             {
@@ -837,6 +903,8 @@ namespace Incantation.UI
 
         private int MeasureBlock(Graphics g, ChatBlock block, int width)
         {
+            if (block.Lines.Count == 0) return 0;
+
             if (block.CachedHeight >= 0 && block.CachedWidth == width)
                 return block.CachedHeight;
 
@@ -963,6 +1031,37 @@ namespace Incantation.UI
                 {
                     g.FillRectangle(accent, left, y, ACCENT_WIDTH, blockH);
                 }
+            }
+
+            // Draw file icon for file artifact blocks
+            if (block.FilePath != null)
+            {
+                try
+                {
+                    Icon fileIcon = null;
+                    if (System.IO.File.Exists(block.FilePath))
+                    {
+                        fileIcon = System.Drawing.Icon.ExtractAssociatedIcon(block.FilePath);
+                    }
+                    if (fileIcon != null)
+                    {
+                        int contentLeftIcon = left + ACCENT_WIDTH + BLOCK_PADDING;
+                        g.DrawIcon(fileIcon, new Rectangle(contentLeftIcon + 2, y + BLOCK_PADDING + 1, 16, 16));
+                        fileIcon.Dispose();
+                    }
+                    else
+                    {
+                        // Draw a generic document icon placeholder
+                        int contentLeftIcon = left + ACCENT_WIDTH + BLOCK_PADDING;
+                        using (Pen iconPen = new Pen(Color.FromArgb(120, 148, 168)))
+                        {
+                            g.DrawRectangle(iconPen, contentLeftIcon + 2, y + BLOCK_PADDING + 1, 12, 15);
+                            g.DrawLine(iconPen, contentLeftIcon + 10, y + BLOCK_PADDING + 1, contentLeftIcon + 14, y + BLOCK_PADDING + 5);
+                            g.DrawLine(iconPen, contentLeftIcon + 14, y + BLOCK_PADDING + 5, contentLeftIcon + 14, y + BLOCK_PADDING + 16);
+                        }
+                    }
+                }
+                catch { }
             }
 
             // Paint lines
@@ -1170,7 +1269,7 @@ namespace Incantation.UI
                 {
                     PaintedLine hpl = _paintedLines[hoverIdx];
                     if (hpl.BlockIndex >= 0 && hpl.BlockIndex < _blocks.Count
-                        && _blocks[hpl.BlockIndex].Collapsible)
+                        && (_blocks[hpl.BlockIndex].Collapsible || _blocks[hpl.BlockIndex].FilePath != null))
                     {
                         Cursor = Cursors.Hand;
                     }
@@ -1238,6 +1337,16 @@ namespace Incantation.UI
                                     }
                                 }
                                 block.InvalidateCache();
+                            }
+
+                            // Open file artifact on click
+                            if (block.FilePath != null)
+                            {
+                                try
+                                {
+                                    System.Diagnostics.Process.Start(block.FilePath);
+                                }
+                                catch { }
                             }
                         }
                     }

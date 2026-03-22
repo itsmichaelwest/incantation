@@ -5,14 +5,16 @@ namespace Incantation.UI
 {
     public static class GradientHeader
     {
-        // Luna Blue palette
-        public static readonly Color LunaBlueStart = Color.FromArgb(49, 105, 198);
-        public static readonly Color LunaBlueEnd = Color.FromArgb(98, 140, 213);
-        public static readonly Color LunaHeaderBg = Color.FromArgb(221, 231, 245);
-        public static readonly Color PanelBorder = Color.FromArgb(172, 186, 214);
-        public static readonly Color SidebarBg = Color.FromArgb(243, 243, 247);
-        public static readonly Color SelectedBg = Color.FromArgb(193, 210, 238);
-        public static readonly Color SelectedBorder = Color.FromArgb(49, 105, 198);
+        // Slate & Copper palette
+        public static readonly Color LunaBlueStart = Color.FromArgb(61, 79, 95);
+        public static readonly Color LunaBlueEnd = Color.FromArgb(107, 132, 148);
+        public static readonly Color LunaHeaderBg = Color.FromArgb(220, 228, 234);
+        public static readonly Color PanelBorder = Color.FromArgb(148, 170, 186);
+        public static readonly Color SidebarBg = Color.FromArgb(236, 240, 243);
+        public static readonly Color SelectedBg = Color.FromArgb(220, 228, 234);
+        public static readonly Color SelectedBorder = Color.FromArgb(61, 79, 95);
+        public static readonly Color HoverBg = Color.FromArgb(240, 225, 210);
+        public static readonly Color HoverBorder = Color.FromArgb(181, 100, 58);
 
         private static Font _headerFont;
 

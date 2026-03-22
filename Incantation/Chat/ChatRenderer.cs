@@ -192,6 +192,8 @@ namespace Incantation.Chat
             AppendFormatted(text + "\n", _italicFont, ColorSystem);
         }
 
+        public void AppendFileArtifact(string filePath) { }
+
         public void AppendNewline()
         {
             _rtb.AppendText("\n");
