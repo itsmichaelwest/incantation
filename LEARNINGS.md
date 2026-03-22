@@ -21,3 +21,4 @@
 - .NET 2.0 C# does not support anonymous types for JSON serialization — use a simple POCO class with explicit getter/setter properties instead (e.g., `PromptPayload` for `{"prompt":"..."}`).
 - .NET 2.0 CSC enforces CS0136 strictly: cannot reuse a local variable name inside a nested scope if it shadows one in the parent scope. Use distinct names (e.g., `taskIdx` vs `idx`).
 - Project renamed from CoworkXP to Incantation. Repo is `incantation`. Solution is `Incantation.sln`, projects are `Incantation/`, `Incantation.ToolServer/`, `Incantation.Proxy/`.
+- ChatPanel uses `System.Windows.Forms.Timer` (not `System.Threading.Timer`) for invalidation throttling to stay on the UI thread. Static GDI brushes/pens are safe to share since they're never modified after creation.

@@ -140,6 +140,30 @@ namespace Incantation.UI
         private static readonly Color ColorCodeBorder = Color.FromArgb(200, 208, 214);
 
         // ================================================================
+        // Pre-created GDI brushes and pens for paint performance
+        // ================================================================
+        private static readonly SolidBrush _brushBgUser = new SolidBrush(BgUser);
+        private static readonly SolidBrush _brushBgAssistant = new SolidBrush(BgAssistant);
+        private static readonly SolidBrush _brushBgTool = new SolidBrush(BgTool);
+        private static readonly SolidBrush _brushBgError = new SolidBrush(BgError);
+        private static readonly SolidBrush _brushBgReasoning = new SolidBrush(BgReasoning);
+        private static readonly SolidBrush _brushBgCode = new SolidBrush(BgCode);
+        private static readonly SolidBrush _brushBgFileArtifact = new SolidBrush(Color.FromArgb(250, 248, 245));
+
+        private static readonly SolidBrush _brushAccentUser = new SolidBrush(AccentUser);
+        private static readonly SolidBrush _brushAccentAssistant = new SolidBrush(AccentAssistant);
+        private static readonly SolidBrush _brushAccentTool = new SolidBrush(AccentTool);
+        private static readonly SolidBrush _brushAccentError = new SolidBrush(AccentError);
+        private static readonly SolidBrush _brushAccentReasoning = new SolidBrush(AccentReasoning);
+
+        private static readonly Pen _codeBorderPen = new Pen(ColorCodeBorder);
+
+        // ================================================================
+        // File icon cache
+        // ================================================================
+        private static Dictionary<string, Icon> _iconCache = new Dictionary<string, Icon>();
+
+        // ================================================================
         // Fonts
         // ================================================================
         private Font _fontNormal;
@@ -160,6 +184,12 @@ namespace Incantation.UI
         private VScrollBar _scrollBar;
         private int _totalHeight;
         private bool _autoScroll;
+
+        // Paint throttling
+        private bool _invalidatePending;
+        private Timer _invalidateTimer;
+        private int _suspendCount;
+        private SolidBrush _highlightBrush;
 
         // Streaming state
         private StringBuilder _lineBuffer;
@@ -241,20 +271,65 @@ namespace Incantation.UI
             _scrollBar.Visible = false;
             _scrollBar.Scroll += OnScroll;
             Controls.Add(_scrollBar);
+
+            _highlightBrush = new SolidBrush(SystemColors.Highlight);
+
+            _invalidatePending = false;
+            _invalidateTimer = new Timer();
+            _invalidateTimer.Interval = 50;
+            _invalidateTimer.Tick += OnInvalidateTimerTick;
+            _invalidateTimer.Start();
         }
 
         // ================================================================
         // IChatRenderer implementation
         // ================================================================
 
-        public void SuspendPainting() { }
-        public void ResumePainting() { }
+        public void SuspendPainting()
+        {
+            _suspendCount++;
+        }
+
+        public void ResumePainting()
+        {
+            _suspendCount--;
+            if (_suspendCount <= 0)
+            {
+                _suspendCount = 0;
+                Invalidate();
+            }
+        }
+
+        private void InvalidateIfNotSuspended()
+        {
+            if (_suspendCount <= 0)
+            {
+                Invalidate();
+            }
+        }
+
+        private void InvalidateThrottled()
+        {
+            _invalidatePending = true;
+        }
+
+        private void OnInvalidateTimerTick(object sender, EventArgs e)
+        {
+            if (_invalidatePending)
+            {
+                _invalidatePending = false;
+                if (_suspendCount <= 0)
+                {
+                    Invalidate();
+                }
+            }
+        }
 
         public void ScrollToEnd()
         {
             _autoScroll = true;
             UpdateScrollBar();
-            Invalidate();
+            InvalidateThrottled();
         }
 
         public void AppendUserMessage(string name, DateTime time, string content)
@@ -342,7 +417,7 @@ namespace Incantation.UI
             }
 
             target.InvalidateCache();
-            Invalidate();
+            InvalidateThrottled();
         }
 
         public void EndReasoning()
@@ -496,7 +571,7 @@ namespace Incantation.UI
             {
                 UpdateScrollBar();
             }
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         public void Clear()
@@ -522,7 +597,7 @@ namespace Incantation.UI
             _selEndLine = -1;
 
             UpdateScrollBar();
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         // ================================================================
@@ -536,7 +611,7 @@ namespace Incantation.UI
             {
                 UpdateScrollBar();
             }
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         // ================================================================
@@ -570,7 +645,7 @@ namespace Incantation.UI
             }
 
             if (_autoScroll) UpdateScrollBar();
-            Invalidate();
+            InvalidateThrottled();
         }
 
         private void FlushLineBuffer()
@@ -1020,10 +1095,23 @@ namespace Incantation.UI
                 if (y > ClientSize.Height)
                 {
                     totalH += blockH + BLOCK_MARGIN;
-                    // Still need to accumulate remaining heights
+                    // Accumulate remaining heights using cache when available,
+                    // estimating uncached blocks to avoid expensive measurement
                     for (int j = bi + 1; j < _blocks.Count; j++)
                     {
-                        totalH += MeasureBlock(g, _blocks[j], width) + BLOCK_MARGIN;
+                        ChatBlock remaining = _blocks[j];
+                        if (remaining.CachedHeight >= 0 && remaining.CachedWidth == width)
+                        {
+                            totalH += remaining.CachedHeight + BLOCK_MARGIN;
+                        }
+                        else
+                        {
+                            // Estimate: 20px per line is a reasonable default
+                            int lineCount = remaining.Lines.Count;
+                            if (lineCount == 0) lineCount = 1;
+                            int estimate = BLOCK_PADDING * 2 + lineCount * 20;
+                            totalH += estimate + BLOCK_MARGIN;
+                        }
                     }
                     break;
                 }
@@ -1044,18 +1132,34 @@ namespace Incantation.UI
             // Background fill
             if (block.BackColor != Color.Empty)
             {
-                using (SolidBrush bg = new SolidBrush(block.BackColor))
+                SolidBrush bgBrush = GetCachedBrush(block.BackColor);
+                if (bgBrush != null)
                 {
-                    g.FillRectangle(bg, left, y, blockWidth, blockH);
+                    g.FillRectangle(bgBrush, left, y, blockWidth, blockH);
+                }
+                else
+                {
+                    using (SolidBrush bg = new SolidBrush(block.BackColor))
+                    {
+                        g.FillRectangle(bg, left, y, blockWidth, blockH);
+                    }
                 }
             }
 
             // Left accent border
             if (block.AccentColor != Color.Empty)
             {
-                using (SolidBrush accent = new SolidBrush(block.AccentColor))
+                SolidBrush accentBrush = GetCachedBrush(block.AccentColor);
+                if (accentBrush != null)
                 {
-                    g.FillRectangle(accent, left, y, ACCENT_WIDTH, blockH);
+                    g.FillRectangle(accentBrush, left, y, ACCENT_WIDTH, blockH);
+                }
+                else
+                {
+                    using (SolidBrush accent = new SolidBrush(block.AccentColor))
+                    {
+                        g.FillRectangle(accent, left, y, ACCENT_WIDTH, blockH);
+                    }
                 }
             }
 
@@ -1064,16 +1168,28 @@ namespace Incantation.UI
             {
                 try
                 {
+                    string ext = System.IO.Path.GetExtension(block.FilePath);
+                    if (ext == null) ext = "";
+                    ext = ext.ToLower();
+
                     Icon fileIcon = null;
-                    if (System.IO.File.Exists(block.FilePath))
+                    if (_iconCache.ContainsKey(ext))
+                    {
+                        fileIcon = _iconCache[ext];
+                    }
+                    else if (System.IO.File.Exists(block.FilePath))
                     {
                         fileIcon = System.Drawing.Icon.ExtractAssociatedIcon(block.FilePath);
+                        if (fileIcon != null)
+                        {
+                            _iconCache[ext] = fileIcon;
+                        }
                     }
+
                     if (fileIcon != null)
                     {
                         int contentLeftIcon = left + ACCENT_WIDTH + BLOCK_PADDING;
                         g.DrawIcon(fileIcon, new Rectangle(contentLeftIcon + 2, y + BLOCK_PADDING + 1, 16, 16));
-                        fileIcon.Dispose();
                     }
                     else
                     {
@@ -1113,34 +1229,25 @@ namespace Incantation.UI
                 // Selection highlight background
                 if (selected)
                 {
-                    using (SolidBrush hlBrush = new SolidBrush(SystemColors.Highlight))
-                    {
-                        g.FillRectangle(hlBrush, contentLeft, lineY, contentWidth, lineH);
-                    }
+                    g.FillRectangle(_highlightBrush, contentLeft, lineY, contentWidth, lineH);
                 }
                 // Code line background (only if not selected)
                 else if (line.BackColor != Color.Empty)
                 {
-                    using (SolidBrush codeBg = new SolidBrush(line.BackColor))
-                    {
-                        g.FillRectangle(codeBg, contentLeft, lineY, contentWidth, lineH);
-                    }
+                    g.FillRectangle(_brushBgCode, contentLeft, lineY, contentWidth, lineH);
                     // Draw borders at code block boundaries
                     bool prevIsCode = i > 0 && block.Lines[i - 1].BackColor != Color.Empty;
                     bool nextIsCode = i + 1 < block.Lines.Count && block.Lines[i + 1].BackColor != Color.Empty;
-                    using (Pen borderPen = new Pen(ColorCodeBorder))
+                    g.DrawLine(_codeBorderPen, contentLeft, lineY, contentLeft + contentWidth, lineY);  // left edge always
+                    g.DrawLine(_codeBorderPen, contentLeft + contentWidth, lineY, contentLeft + contentWidth, lineY + lineH);  // right
+                    g.DrawLine(_codeBorderPen, contentLeft, lineY, contentLeft, lineY + lineH);  // left
+                    if (!nextIsCode)
                     {
-                        g.DrawLine(borderPen, contentLeft, lineY, contentLeft + contentWidth, lineY);  // left edge always
-                        g.DrawLine(borderPen, contentLeft + contentWidth, lineY, contentLeft + contentWidth, lineY + lineH);  // right
-                        g.DrawLine(borderPen, contentLeft, lineY, contentLeft, lineY + lineH);  // left
-                        if (!nextIsCode)
-                        {
-                            g.DrawLine(borderPen, contentLeft, lineY + lineH, contentLeft + contentWidth, lineY + lineH);  // bottom
-                        }
-                        if (!prevIsCode)
-                        {
-                            g.DrawLine(borderPen, contentLeft, lineY, contentLeft + contentWidth, lineY);  // top
-                        }
+                        g.DrawLine(_codeBorderPen, contentLeft, lineY + lineH, contentLeft + contentWidth, lineY + lineH);  // bottom
+                    }
+                    if (!prevIsCode)
+                    {
+                        g.DrawLine(_codeBorderPen, contentLeft, lineY, contentLeft + contentWidth, lineY);  // top
                     }
                 }
 
@@ -1269,7 +1376,7 @@ namespace Incantation.UI
             if (idx < 0)
             {
                 _hasSelection = false;
-                Invalidate();
+                InvalidateIfNotSuspended();
                 return;
             }
 
@@ -1280,7 +1387,7 @@ namespace Incantation.UI
             _selEndLine = pl.LineIndex;
             _isSelecting = true;
             _hasSelection = false;
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -1322,7 +1429,7 @@ namespace Incantation.UI
 
             // Selection exists if start != end
             _hasSelection = (_selStartBlock != _selEndBlock || _selStartLine != _selEndLine);
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
@@ -1378,7 +1485,7 @@ namespace Incantation.UI
                     }
                 }
             }
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -1485,7 +1592,7 @@ namespace Incantation.UI
                 int maxVal = Math.Max(0, _totalHeight - ClientSize.Height);
                 _autoScroll = (_scrollBar.Value >= maxVal - 30);
             }
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)
@@ -1501,7 +1608,7 @@ namespace Incantation.UI
             _scrollBar.Value = newVal;
 
             _autoScroll = (newVal >= maxVal - 30);
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         protected override void OnResize(EventArgs e)
@@ -1514,12 +1621,31 @@ namespace Incantation.UI
             }
             _totalHeight = 0;
             UpdateScrollBar();
-            Invalidate();
+            InvalidateIfNotSuspended();
         }
 
         // ================================================================
         // Utility methods
         // ================================================================
+
+        private static SolidBrush GetCachedBrush(Color color)
+        {
+            if (color == BgUser) return _brushBgUser;
+            if (color == BgAssistant) return _brushBgAssistant;
+            if (color == BgTool) return _brushBgTool;
+            if (color == BgError) return _brushBgError;
+            if (color == BgReasoning) return _brushBgReasoning;
+            if (color == BgCode) return _brushBgCode;
+            if (color == AccentUser) return _brushAccentUser;
+            if (color == AccentAssistant) return _brushAccentAssistant;
+            if (color == AccentTool) return _brushAccentTool;
+            if (color == AccentError) return _brushAccentError;
+            if (color == AccentReasoning) return _brushAccentReasoning;
+            // Check the file artifact background color
+            if (color.A == 255 && color.R == 250 && color.G == 248 && color.B == 245)
+                return _brushBgFileArtifact;
+            return null;
+        }
 
         private static string StripEmoji(string text)
         {

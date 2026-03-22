@@ -19,6 +19,8 @@ namespace Incantation.Agent
         private Type _charType;
         private string _lastAnimation;
         private string _lastError;
+        private DateTime _lastAnimationTime;
+        private const int THROTTLE_MS = 600;
 
         public bool IsAvailable
         {
@@ -168,180 +170,57 @@ namespace Incantation.Agent
             }
         }
 
-        public void AnimateThinking()
+        /// Transition to a new animation with throttling.
+        /// Skips if same animation is already playing or if called
+        /// within THROTTLE_MS of the last transition.
+        private bool TransitionTo(string animation)
         {
-            if (_lastAnimation == "Thinking")
+            if (_lastAnimation == animation) return false;
+
+            DateTime now = DateTime.Now;
+            if ((now - _lastAnimationTime).TotalMilliseconds < THROTTLE_MS)
             {
-                return;
+                return false;
             }
+
             StopAll();
-            Play("Thinking");
-            _lastAnimation = "Thinking";
+            Play(animation);
+            _lastAnimation = animation;
+            _lastAnimationTime = now;
+            return true;
         }
 
-        public void AnimateReading()
-        {
-            if (_lastAnimation == "Reading")
-            {
-                return;
-            }
-            StopAll();
-            Play("Reading");
-            _lastAnimation = "Reading";
-        }
+        // --- Looping state animations (throttled) ---
 
-        public void AnimateWriting()
-        {
-            if (_lastAnimation == "Writing")
-            {
-                return;
-            }
-            StopAll();
-            Play("Writing");
-            _lastAnimation = "Writing";
-        }
+        public void AnimateThinking()  { TransitionTo("Thinking"); }
+        public void AnimateReading()   { TransitionTo("Reading"); }
+        public void AnimateWriting()   { TransitionTo("Writing"); }
+        public void AnimateSearching() { TransitionTo("Searching"); }
+        public void AnimateIdle()      { TransitionTo("RestPose"); }
+        public void AnimateSad()       { TransitionTo("Sad"); }
+        public void AnimateExplain()   { TransitionTo("Explain"); }
+        public void AnimateSuggest()   { TransitionTo("Suggest"); }
+        public void AnimateProcessing(){ TransitionTo("Processing"); }
+        public void AnimateConfused()  { TransitionTo("Confused"); }
 
-        public void AnimateSearching()
-        {
-            if (_lastAnimation == "Searching")
-            {
-                return;
-            }
-            StopAll();
-            Play("Searching");
-            _lastAnimation = "Searching";
-        }
+        // --- One-shot reaction animations (throttled) ---
 
-        public void AnimateIdle()
-        {
-            if (_lastAnimation == "RestPose")
-            {
-                return;
-            }
-            StopAll();
-            Play("RestPose");
-            _lastAnimation = "RestPose";
-        }
-
-        public void AnimateSad()
-        {
-            if (_lastAnimation == "Sad")
-            {
-                return;
-            }
-            StopAll();
-            Play("Sad");
-            _lastAnimation = "Sad";
-        }
-
-        public void AnimateGreet()
-        {
-            StopAll();
-            Play("Greet");
-            _lastAnimation = "Greet";
-        }
-
-        public void AnimateExplain()
-        {
-            if (_lastAnimation == "Explain") return;
-            StopAll();
-            Play("Explain");
-            _lastAnimation = "Explain";
-        }
-
-        public void AnimateSuggest()
-        {
-            if (_lastAnimation == "Suggest") return;
-            StopAll();
-            Play("Suggest");
-            _lastAnimation = "Suggest";
-        }
-
-        public void AnimateProcessing()
-        {
-            if (_lastAnimation == "Processing") return;
-            StopAll();
-            Play("Processing");
-            _lastAnimation = "Processing";
-        }
-
-        public void AnimateCongratulate()
-        {
-            StopAll();
-            Play("Congratulate");
-            _lastAnimation = "Congratulate";
-        }
-
-        public void AnimateSurprised()
-        {
-            StopAll();
-            Play("Surprised");
-            _lastAnimation = "Surprised";
-        }
-
-        public void AnimateConfused()
-        {
-            if (_lastAnimation == "Confused") return;
-            StopAll();
-            Play("Confused");
-            _lastAnimation = "Confused";
-        }
-
-        public void AnimateAcknowledge()
-        {
-            StopAll();
-            Play("Acknowledge");
-            _lastAnimation = "Acknowledge";
-        }
-
-        public void AnimateWave()
-        {
-            StopAll();
-            Play("Wave");
-            _lastAnimation = "Wave";
-        }
+        public void AnimateGreet()       { TransitionTo("Greet"); }
+        public void AnimateCongratulate(){ TransitionTo("Congratulate"); }
+        public void AnimateSurprised()   { TransitionTo("Surprised"); }
+        public void AnimateAcknowledge() { TransitionTo("Acknowledge"); }
+        public void AnimateWave()        { TransitionTo("Wave"); }
+        public void AnimateAnnounce()    { TransitionTo("Announce"); }
+        public void AnimateGetAttention(){ TransitionTo("GetAttention"); }
+        public void AnimatePleased()     { TransitionTo("Pleased"); }
+        public void AnimateDecline()     { TransitionTo("Decline"); }
+        public void AnimateLookUp()      { TransitionTo("LookUp"); }
 
         public void AnimateDoMagic()
         {
-            StopAll();
-            Play("DoMagic1");
+            if (!TransitionTo("DoMagic1")) return;
             Play("DoMagic2");
             _lastAnimation = "DoMagic2";
-        }
-
-        public void AnimateAnnounce()
-        {
-            StopAll();
-            Play("Announce");
-            _lastAnimation = "Announce";
-        }
-
-        public void AnimateGetAttention()
-        {
-            StopAll();
-            Play("GetAttention");
-            _lastAnimation = "GetAttention";
-        }
-
-        public void AnimatePleased()
-        {
-            StopAll();
-            Play("Pleased");
-            _lastAnimation = "Pleased";
-        }
-
-        public void AnimateDecline()
-        {
-            StopAll();
-            Play("Decline");
-            _lastAnimation = "Decline";
-        }
-
-        public void AnimateLookUp()
-        {
-            StopAll();
-            Play("LookUp");
-            _lastAnimation = "LookUp";
         }
 
         public void Speak(string text)
