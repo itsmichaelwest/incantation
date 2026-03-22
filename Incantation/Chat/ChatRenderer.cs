@@ -19,9 +19,12 @@ namespace Incantation.Chat
         private Font _headerFont;
         private Font _subheaderFont;
         private Font _inlineCodeFont;
+        private Font _strikeFont;
 
         private StringBuilder _lineBuffer;
         private bool _skippingLangHint;
+        private bool _inTable;
+        private System.Collections.Generic.List<string> _tableRows;
 
         private static readonly Color ColorUserName = Color.FromArgb(0, 51, 153);
         private static readonly Color ColorAssistantName = Color.FromArgb(0, 100, 0);
@@ -34,6 +37,8 @@ namespace Incantation.Chat
         private static readonly Color ColorCodeBackground = Color.FromArgb(245, 245, 245);
         private static readonly Color ColorBullet = Color.FromArgb(100, 100, 100);
         private static readonly Color ColorHeader = Color.FromArgb(0, 51, 153);
+        private static readonly Color ColorBlockquote = Color.FromArgb(100, 100, 100);
+        private static readonly Color ColorLink = Color.FromArgb(0, 0, 200);
 
         private const int WM_SETREDRAW = 0x000B;
 
@@ -47,6 +52,8 @@ namespace Incantation.Chat
             _inReasoning = false;
             _lineBuffer = new StringBuilder();
             _skippingLangHint = false;
+            _inTable = false;
+            _tableRows = new System.Collections.Generic.List<string>();
             _normalFont = new Font("Tahoma", 8.25f, FontStyle.Regular);
             _boldFont = new Font("Tahoma", 8.25f, FontStyle.Bold);
             _italicFont = new Font("Tahoma", 8.25f, FontStyle.Italic);
@@ -55,6 +62,7 @@ namespace Incantation.Chat
             _headerFont = new Font("Tahoma", 12f, FontStyle.Bold);
             _subheaderFont = new Font("Tahoma", 10f, FontStyle.Bold);
             _inlineCodeFont = new Font("Lucida Console", 8.5f, FontStyle.Regular);
+            _strikeFont = new Font("Tahoma", 8.25f, FontStyle.Strikeout);
         }
 
         public void SuspendPainting()
@@ -194,6 +202,12 @@ namespace Incantation.Chat
             // Flush any remaining text in the line buffer
             FlushLineBuffer();
 
+            if (_inTable)
+            {
+                FlushTable();
+                _inTable = false;
+            }
+
             _inCodeBlock = false;
             _inReasoning = false;
             _skippingLangHint = false;
@@ -285,6 +299,33 @@ namespace Incantation.Chat
                 return;
             }
 
+            // Table handling
+            bool isTableRow = trimmed.Length > 0
+                && trimmed[0] == '|'
+                && trimmed[trimmed.Length - 1] == '|';
+
+            if (_inTable)
+            {
+                if (isTableRow)
+                {
+                    _tableRows.Add(line);
+                    return;
+                }
+                else
+                {
+                    FlushTable();
+                    _inTable = false;
+                    // Fall through to render this non-table line normally
+                }
+            }
+            else if (isTableRow)
+            {
+                _inTable = true;
+                _tableRows = new System.Collections.Generic.List<string>();
+                _tableRows.Add(line);
+                return;
+            }
+
             // Empty line
             if (line.Length == 0)
             {
@@ -295,7 +336,7 @@ namespace Incantation.Chat
             // Horizontal rule: --- or *** or ___
             if (IsHorizontalRule(line))
             {
-                AppendFormatted("────────────────────────────────────────\n",
+                AppendFormatted("----------------------------------------\n",
                     _normalFont, ColorTimestamp);
                 return;
             }
@@ -320,15 +361,69 @@ namespace Incantation.Chat
                 return;
             }
 
-            // Bullet list items: - item or * item (but not --- or ***)
-            if ((StartsWith(line, "- ") || StartsWith(line, "* "))
-                && !IsHorizontalRule(line))
+            // Blockquotes: > text
+            if (StartsWith(trimmed, "> "))
             {
-                string itemText = line.Substring(2);
-                AppendFormatted("  \u2022 ", _normalFont, ColorBullet);
-                RenderInlineMarkdown(itemText);
+                string quoteText = trimmed.Substring(2);
+                // Strip nested > prefixes
+                while (StartsWith(quoteText, "> "))
+                {
+                    quoteText = quoteText.Substring(2);
+                }
+                if (StartsWith(quoteText, ">"))
+                {
+                    quoteText = quoteText.Substring(1);
+                }
+                AppendFormatted("  | ", _normalFont, ColorBlockquote);
+                RenderInlineMarkdown(quoteText);
                 AppendFormatted("\n", _normalFont, ColorContent);
                 return;
+            }
+            if (trimmed == ">")
+            {
+                AppendFormatted("\n", _normalFont, ColorContent);
+                return;
+            }
+
+            // Bullet list items with nesting: [spaces]- item or [spaces]* item
+            {
+                int indent = 0;
+                int idx = 0;
+                while (idx < line.Length && line[idx] == ' ')
+                {
+                    indent++;
+                    idx++;
+                }
+                if (idx + 1 < line.Length
+                    && (line[idx] == '-' || line[idx] == '*')
+                    && line[idx + 1] == ' '
+                    && !IsHorizontalRule(line))
+                {
+                    string itemText = line.Substring(idx + 2);
+                    int nestLevel = indent / 2;
+                    string indentStr = new string(' ', 2 + nestLevel * 4);
+                    AppendFormatted(indentStr + "\u2022 ", _normalFont, ColorBullet);
+                    RenderInlineMarkdown(itemText);
+                    AppendFormatted("\n", _normalFont, ColorContent);
+                    return;
+                }
+            }
+
+            // Ordered list items: [spaces]N. item
+            {
+                int olContentStart;
+                int olIndent;
+                if (IsOrderedListItem(line, out olContentStart, out olIndent))
+                {
+                    int nestLevel = olIndent / 2;
+                    string prefix = line.Substring(olIndent, olContentStart - olIndent);
+                    string itemText = line.Substring(olContentStart);
+                    string indentStr = new string(' ', 2 + nestLevel * 4);
+                    AppendFormatted(indentStr + prefix, _normalFont, ColorBullet);
+                    RenderInlineMarkdown(itemText);
+                    AppendFormatted("\n", _normalFont, ColorContent);
+                    return;
+                }
             }
 
             // Regular line: render inline markdown + newline
@@ -338,11 +433,12 @@ namespace Incantation.Chat
 
         private void RenderInlineMarkdown(string text)
         {
-            // States: 0=normal, 1=bold, 2=italic, 3=inline code
+            // States: 0=normal, 1=bold, 2=italic, 3=inline code, 4=strikethrough
             const int STATE_NORMAL = 0;
             const int STATE_BOLD = 1;
             const int STATE_ITALIC = 2;
             const int STATE_CODE = 3;
+            const int STATE_STRIKE = 4;
 
             int state = STATE_NORMAL;
             StringBuilder buf = new StringBuilder();
@@ -374,6 +470,51 @@ namespace Incantation.Chat
                 // Don't parse markdown inside inline code
                 if (state == STATE_CODE)
                 {
+                    buf.Append(c);
+                    continue;
+                }
+
+                // Strikethrough toggle: ~~
+                if (c == '~' && i + 1 < len && text[i + 1] == '~')
+                {
+                    FlushInline(buf, state);
+                    buf = new StringBuilder();
+                    if (state == STATE_STRIKE)
+                    {
+                        state = STATE_NORMAL;
+                    }
+                    else
+                    {
+                        state = STATE_STRIKE;
+                    }
+                    i++; // skip second ~
+                    continue;
+                }
+
+                // Links: [text](url)
+                if (c == '[')
+                {
+                    int closeBracket = text.IndexOf(']', i + 1);
+                    if (closeBracket > i + 1
+                        && closeBracket + 1 < len
+                        && text[closeBracket + 1] == '(')
+                    {
+                        int closeParen = text.IndexOf(')', closeBracket + 2);
+                        if (closeParen > closeBracket + 2)
+                        {
+                            FlushInline(buf, state);
+                            buf = new StringBuilder();
+
+                            string linkText = text.Substring(i + 1, closeBracket - i - 1);
+                            string linkUrl = text.Substring(closeBracket + 2, closeParen - closeBracket - 2);
+
+                            AppendFormatted(linkText, _normalFont, ColorLink);
+                            AppendFormatted(" (" + linkUrl + ")", _normalFont, ColorTimestamp);
+
+                            i = closeParen; // loop will i++ past the )
+                            continue;
+                        }
+                    }
                     buf.Append(c);
                     continue;
                 }
@@ -447,6 +588,9 @@ namespace Incantation.Chat
                 case 3: // inline code
                     AppendInlineCode(text);
                     break;
+                case 4: // strikethrough
+                    AppendFormatted(text, _strikeFont, ColorContent);
+                    break;
                 default: // normal
                     AppendFormatted(text, _normalFont, ColorContent);
                     break;
@@ -462,6 +606,123 @@ namespace Incantation.Chat
             _rtb.SelectionColor = ColorContent;
             _rtb.SelectionBackColor = ColorCodeBackground;
             _rtb.Select(_rtb.TextLength, 0);
+        }
+
+        private void FlushTable()
+        {
+            if (_tableRows.Count == 0)
+            {
+                return;
+            }
+
+            // Parse all rows into cells, skipping separator rows
+            System.Collections.Generic.List<string[]> parsed = new System.Collections.Generic.List<string[]>();
+            int maxCols = 0;
+
+            for (int r = 0; r < _tableRows.Count; r++)
+            {
+                string row = _tableRows[r].Trim();
+                if (IsTableSeparator(row))
+                {
+                    continue;
+                }
+                string[] cells = ParseTableRow(row);
+                if (cells.Length > maxCols)
+                {
+                    maxCols = cells.Length;
+                }
+                parsed.Add(cells);
+            }
+
+            if (parsed.Count == 0 || maxCols == 0)
+            {
+                return;
+            }
+
+            // Calculate column widths
+            int[] widths = new int[maxCols];
+            for (int r = 0; r < parsed.Count; r++)
+            {
+                for (int c = 0; c < parsed[r].Length; c++)
+                {
+                    if (parsed[r][c].Length > widths[c])
+                    {
+                        widths[c] = parsed[r][c].Length;
+                    }
+                }
+            }
+
+            // Render each row in code font with padded columns
+            for (int r = 0; r < parsed.Count; r++)
+            {
+                StringBuilder sb = new StringBuilder("  ");
+                for (int c = 0; c < maxCols; c++)
+                {
+                    string cell = c < parsed[r].Length ? parsed[r][c] : "";
+                    sb.Append(cell);
+                    int pad = widths[c] - cell.Length + 2;
+                    for (int p = 0; p < pad; p++)
+                    {
+                        sb.Append(' ');
+                    }
+                }
+                AppendFormatted(sb.ToString() + "\n", _codeFont, ColorContent);
+
+                // Render separator after header row
+                if (r == 0)
+                {
+                    StringBuilder sep = new StringBuilder("  ");
+                    for (int c = 0; c < maxCols; c++)
+                    {
+                        for (int d = 0; d < widths[c]; d++)
+                        {
+                            sep.Append('-');
+                        }
+                        sep.Append("  ");
+                    }
+                    AppendFormatted(sep.ToString() + "\n", _codeFont, ColorTimestamp);
+                }
+            }
+
+            _tableRows.Clear();
+        }
+
+        private static bool IsTableSeparator(string row)
+        {
+            string trimmed = row.Trim();
+            if (trimmed.Length < 3 || trimmed[0] != '|')
+            {
+                return false;
+            }
+            for (int i = 0; i < trimmed.Length; i++)
+            {
+                char c = trimmed[i];
+                if (c != '|' && c != '-' && c != ':' && c != ' ')
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static string[] ParseTableRow(string row)
+        {
+            string trimmed = row.Trim();
+            // Remove leading and trailing pipes
+            if (trimmed.Length > 0 && trimmed[0] == '|')
+            {
+                trimmed = trimmed.Substring(1);
+            }
+            if (trimmed.Length > 0 && trimmed[trimmed.Length - 1] == '|')
+            {
+                trimmed = trimmed.Substring(0, trimmed.Length - 1);
+            }
+            string[] parts = trimmed.Split('|');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                parts[i] = parts[i].Trim();
+            }
+            return parts;
         }
 
         private static bool IsHorizontalRule(string line)
@@ -501,6 +762,32 @@ namespace Incantation.Chat
             }
 
             return count >= 3;
+        }
+
+        private static bool IsOrderedListItem(string line, out int contentStart, out int indentSpaces)
+        {
+            contentStart = 0;
+            indentSpaces = 0;
+            int i = 0;
+            while (i < line.Length && line[i] == ' ')
+            {
+                indentSpaces++;
+                i++;
+            }
+            if (i >= line.Length || line[i] < '0' || line[i] > '9')
+            {
+                return false;
+            }
+            while (i < line.Length && line[i] >= '0' && line[i] <= '9')
+            {
+                i++;
+            }
+            if (i + 1 >= line.Length || line[i] != '.' || line[i + 1] != ' ')
+            {
+                return false;
+            }
+            contentStart = i + 2;
+            return true;
         }
 
         private static bool StartsWith(string text, string prefix)
