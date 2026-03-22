@@ -208,7 +208,7 @@ namespace Incantation
             _statusConnection.AutoSize = false;
 
             _statusSession = new ToolStripStatusLabel();
-            _statusSession.Text = "No Session";
+            UpdateTitle("No Session");
             _statusSession.Width = 250;
             _statusSession.AutoSize = false;
 
@@ -649,7 +649,7 @@ namespace Incantation
                 if (sid == _sessionId)
                 {
                     if (_currentSessionData != null) _currentSessionData.Title = newTitle;
-                    _statusSession.Text = newTitle;
+                    UpdateTitle(newTitle);
                 }
                 LoadPersistedSessions();
             }
@@ -687,7 +687,7 @@ namespace Incantation
                     _outputFiles.Clear();
                     _toolCallIndex.Clear();
                     _toolCallNames.Clear();
-                    _statusSession.Text = "No Session";
+                    UpdateTitle("No Session");
                 }
 
                 LoadPersistedSessions();
@@ -696,6 +696,22 @@ namespace Incantation
 
         private void StartToolServer()
         {
+            // Kill any dangling ToolServer from a previous crash
+            try
+            {
+                System.Diagnostics.Process[] existing =
+                    System.Diagnostics.Process.GetProcessesByName("Incantation.ToolServer");
+                for (int i = 0; i < existing.Length; i++)
+                {
+                    try { existing[i].Kill(); }
+                    catch { }
+                }
+            }
+            catch
+            {
+                // Best effort cleanup
+            }
+
             try
             {
                 // Check if ToolServer.exe exists next to Incantation.exe
@@ -859,7 +875,7 @@ namespace Incantation
             if (_sessionId == null)
             {
                 _sessionId = sid;
-                _statusSession.Text = string.Format("Session: {0}", TruncateId(sid));
+                UpdateTitle(string.Format("Session: {0}", TruncateId(sid)));
 
                 _tasksList.Items.Clear();
                 _outputList.Items.Clear();
@@ -947,6 +963,7 @@ namespace Incantation
                 ChatMessage msg = msgs[i];
                 if (msg.Role == "user")
                 {
+                    _assistantBuffer = ""; // Reset so next assistant creates a new header
                     _chatRenderer.AppendUserMessage("You", msg.Timestamp, msg.Content);
                 }
                 else if (msg.Role == "assistant")
@@ -1031,7 +1048,7 @@ namespace Incantation
             }
 
             string displayTitle = loaded.DisplayTitle;
-            _statusSession.Text = displayTitle;
+            UpdateTitle(displayTitle);
             _chatRenderer.ScrollToEnd();
 
             // Restore working directory
@@ -1110,7 +1127,7 @@ namespace Incantation
                 }
                 _currentSessionData.Title = autoTitle;
                 _sessionTitles[_sessionId] = autoTitle;
-                _statusSession.Text = autoTitle;
+                UpdateTitle(autoTitle);
                 _sessionStore.Save(_currentSessionData);
                 LoadPersistedSessions();
             }
@@ -1124,7 +1141,7 @@ namespace Incantation
                 }
                 _currentSessionData.Title = autoTitle;
                 _sessionTitles[_sessionId] = autoTitle;
-                _statusSession.Text = autoTitle;
+                UpdateTitle(autoTitle);
                 _sessionStore.Save(_currentSessionData);
                 LoadPersistedSessions();
             }
@@ -1442,7 +1459,7 @@ namespace Incantation
             if (_sessionId != null)
             {
                 _sessionTitles[_sessionId] = title;
-                _statusSession.Text = title;
+                UpdateTitle(title);
                 if (_currentSessionData != null)
                 {
                     _currentSessionData.Title = title;
@@ -1577,6 +1594,9 @@ namespace Incantation
 
         private void AddOutputItem(string text)
         {
+            if (text == null || text.Length == 0) return;
+            // Only add items that look like file paths
+            if (text.IndexOf('\\') < 0 && text.IndexOf('/') < 0) return;
             for (int i = 0; i < _outputFiles.Count; i++)
             {
                 if (_outputFiles[i] == text) return;
@@ -1778,7 +1798,9 @@ namespace Incantation
             e.DrawBackground();
 
             string filePath = _outputFiles[e.Index];
-            string fileName = Path.GetFileName(filePath);
+            string fileName;
+            try { fileName = Path.GetFileName(filePath); }
+            catch { fileName = filePath; }
 
             // Draw file icon
             try
@@ -1825,7 +1847,7 @@ namespace Incantation
             _toolCallIndex.Clear();
             _toolCallNames.Clear();
             _inputPanel.IsBusy = false;
-            _statusSession.Text = "No Session";
+            UpdateTitle("No Session");
             _statusState.Text = "Connecting...";
             _chatRenderer.AppendSystemMessage("Creating new session...");
             _chatRenderer.ScrollToEnd();
@@ -2034,6 +2056,19 @@ namespace Incantation
                 }
             }
             return result.Length > 0 ? result : null;
+        }
+
+        private void UpdateTitle(string sessionName)
+        {
+            if (sessionName == null || sessionName.Length == 0 || sessionName == "No Session")
+            {
+                this.Text = "Incantation";
+            }
+            else
+            {
+                this.Text = sessionName + " - Incantation";
+            }
+            _statusSession.Text = sessionName;
         }
 
         private static string TruncateId(string id)
