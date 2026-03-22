@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Text;
 using System.Windows.Forms;
 using Incantation.Agent;
 using Incantation.Chat;
@@ -573,7 +574,7 @@ namespace Incantation
             // Create a new proxy session
             _chatRenderer.AppendSystemMessage(string.Format("Connecting to proxy at {0}...", _proxyAddress));
             _chatRenderer.ScrollToEnd();
-            _sessionWorker.RunWorkerAsync(GetSelectedWorkDir());
+            _sessionWorker.RunWorkerAsync(new string[] { GetSelectedWorkDir(), null });
         }
 
         private void LoadPersistedSessions()
@@ -806,12 +807,14 @@ namespace Incantation
                 e.Result = null;
                 return;
             }
-            string workDir = e.Argument as string;
+            string[] args = e.Argument as string[];
+            string workDir = (args != null && args.Length > 0) ? args[0] : "";
+            string history = (args != null && args.Length > 1) ? args[1] : null;
             if (workDir == null || workDir.Length == 0)
             {
                 workDir = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             }
-            e.Result = _proxyClient.CreateSession(workDir);
+            e.Result = _proxyClient.CreateSession(workDir, history);
         }
 
         private void OnSessionCompleted(object sender, RunWorkerCompletedEventArgs e)
@@ -1019,6 +1022,12 @@ namespace Incantation
             _statusSession.Text = title;
             _chatRenderer.ScrollToEnd();
 
+            // Restore working directory
+            if (loaded.WorkingDirectory != null && loaded.WorkingDirectory.Length > 0)
+            {
+                _cboWorkDir.Text = loaded.WorkingDirectory;
+            }
+
             // Don't create a proxy session now -- it will be created lazily on first message
             _proxySessionId = null;
 
@@ -1082,6 +1091,7 @@ namespace Incantation
             if (_currentSessionData == null && _sessionId != null)
             {
                 _currentSessionData = new SessionData(_sessionId);
+                _currentSessionData.WorkingDirectory = GetSelectedWorkDir();
                 string autoTitle = text;
                 if (autoTitle.Length > 50)
                 {
@@ -1133,12 +1143,13 @@ namespace Incantation
 
             if (_proxySessionId == null)
             {
-                // Need to create a proxy session first
+                // Need to create a proxy session first — pass conversation history for resumed sessions
                 _statusState.Text = "Creating session...";
                 _pendingMessage = prompt;
                 if (!_sessionWorker.IsBusy)
                 {
-                    _sessionWorker.RunWorkerAsync(GetSelectedWorkDir());
+                    string history = BuildConversationHistory(_currentSessionData);
+                    _sessionWorker.RunWorkerAsync(new string[] { GetSelectedWorkDir(), history });
                 }
                 return;
             }
@@ -1783,7 +1794,7 @@ namespace Incantation
             _chatRenderer.AppendSystemMessage("Creating new session...");
             _chatRenderer.ScrollToEnd();
 
-            if (!_sessionWorker.IsBusy) _sessionWorker.RunWorkerAsync(GetSelectedWorkDir());
+            if (!_sessionWorker.IsBusy) _sessionWorker.RunWorkerAsync(new string[] { GetSelectedWorkDir(), null });
         }
 
         private void OnExit(object sender, EventArgs e)
@@ -1930,6 +1941,54 @@ namespace Incantation
                 return _cboWorkDir.Text;
             }
             return Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        }
+
+        private static string BuildConversationHistory(SessionData session)
+        {
+            if (session == null || session.Messages == null || session.Messages.Count == 0)
+            {
+                return null;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            List<ChatMessage> msgs = session.Messages;
+            for (int i = 0; i < msgs.Count; i++)
+            {
+                ChatMessage msg = msgs[i];
+                if (msg.Role == "user")
+                {
+                    sb.Append("User: ");
+                    sb.AppendLine(msg.Content);
+                }
+                else if (msg.Role == "assistant" && msg.Type != "reasoning")
+                {
+                    string content = msg.Content;
+                    if (content.Length > 500)
+                    {
+                        content = content.Substring(0, 497) + "...";
+                    }
+                    sb.Append("Assistant: ");
+                    sb.AppendLine(content);
+                }
+                else if (msg.Role == "tool")
+                {
+                    sb.Append("Tool: ");
+                    sb.AppendLine(msg.Content);
+                }
+            }
+
+            string result = sb.ToString();
+            // Cap total history to ~4000 chars to avoid bloating the system prompt
+            if (result.Length > 4000)
+            {
+                result = result.Substring(result.Length - 4000);
+                int newline = result.IndexOf('\n');
+                if (newline >= 0)
+                {
+                    result = "...\n" + result.Substring(newline + 1);
+                }
+            }
+            return result.Length > 0 ? result : null;
         }
 
         private static string TruncateId(string id)

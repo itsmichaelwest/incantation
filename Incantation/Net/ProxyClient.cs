@@ -86,6 +86,11 @@ namespace Incantation.Net
 
         public string CreateSession(string workingDirectory)
         {
+            return CreateSession(workingDirectory, null);
+        }
+
+        public string CreateSession(string workingDirectory, string conversationHistory)
+        {
             string url = _baseUrl + "/session";
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = "POST";
@@ -93,7 +98,9 @@ namespace Incantation.Net
             req.Timeout = 30000;
             req.ReadWriteTimeout = 30000;
 
-            string bodyJson = JsonConvert.SerializeObject(new WorkDirPayload(workingDirectory));
+            SessionPayload payload = new SessionPayload(workingDirectory);
+            payload.history = conversationHistory;
+            string bodyJson = JsonConvert.SerializeObject(payload);
             byte[] bodyBytes = Encoding.UTF8.GetBytes(bodyJson);
             req.ContentLength = bodyBytes.Length;
 
@@ -219,11 +226,12 @@ namespace Incantation.Net
     /// Simple serializable payload for the prompt POST body.
     /// Using a class instead of anonymous type for .NET 2.0 compatibility.
     /// </summary>
-    internal class WorkDirPayload
+    internal class SessionPayload
     {
         private string _workingDirectory;
+        private string _history;
 
-        public WorkDirPayload(string workingDirectory)
+        public SessionPayload(string workingDirectory)
         {
             _workingDirectory = workingDirectory;
         }
@@ -232,6 +240,12 @@ namespace Incantation.Net
         {
             get { return _workingDirectory; }
             set { _workingDirectory = value; }
+        }
+
+        public string history
+        {
+            get { return _history; }
+            set { _history = value; }
         }
     }
 

@@ -14,6 +14,7 @@ namespace Incantation.Chat
         private List<ChatMessage> _messages;
         private List<string> _contextFiles;
         private List<string> _outputFiles;
+        private string _workingDirectory;
 
         public SessionData()
         {
@@ -24,6 +25,7 @@ namespace Incantation.Chat
             _messages = new List<ChatMessage>();
             _contextFiles = new List<string>();
             _outputFiles = new List<string>();
+            _workingDirectory = "";
         }
 
         public SessionData(string sessionId)
@@ -35,6 +37,7 @@ namespace Incantation.Chat
             _messages = new List<ChatMessage>();
             _contextFiles = new List<string>();
             _outputFiles = new List<string>();
+            _workingDirectory = "";
         }
 
         public string SessionId
@@ -77,6 +80,12 @@ namespace Incantation.Chat
         {
             get { return _outputFiles; }
             set { _outputFiles = value; }
+        }
+
+        public string WorkingDirectory
+        {
+            get { return _workingDirectory; }
+            set { _workingDirectory = value; }
         }
 
         public void AddMessage(ChatMessage msg)
